@@ -1072,12 +1072,33 @@ const XL_DESC = {
   TODAY: '今日の日付を表示する', NOW: '今の日付と時刻を表示する', LEFT: '文字列の左から指定した数の文字を取り出す', RIGHT: '文字列の右から指定した数の文字を取り出す',
   MID: '文字列の途中から指定した数の文字を取り出す', LEN: '文字数を数える',
 };
+const NO_QUIZ_SUBJECT_RE = /エクセル|excel|exl|演習|実習|ゼミ|セミナー|実技|実験|ワークショップ|プログラミング|語学|英会話|会話|体育|スポーツ実技|PBL/i;
+// ② what the handouts look like: mostly step-by-step instructions, or hardly any red keywords
+const STEP_RE = /(せよ|しなさい|してください|クリック|ドラッグ|入力し|選択し|押し|開き|保存し)/;
+const autoCache = new Map();
+function autoMode(sub) {
+  if (NO_QUIZ_SUBJECT_RE.test(sub || '')) return { mode: 'none', why: 'name' };
+  const lecs = S.lectures.filter((l) => l.subject === sub);
+  const ck = sub + '|' + lecs.map((l) => l.id + ':' + l.items.length).join(',');
+  if (autoCache.has(ck)) return autoCache.get(ck);
+  let res = { mode: FORMULA_SUBJECT_RE.test(sub || '') ? 'formula' : 'red', why: '' };
+  if (lecs.length) {
+    let lines = 0, steps = 0, red = 0;
+    for (const l of lecs) {
+      for (const pg of l.pages) for (const ln of pg.lines) { const t = ln.map((x) => x[0]).join(''); if (t.length > 6) { lines++; if (STEP_RE.test(t)) steps++; } }
+      red += l.items.filter((it) => !it.x && !isAdmin(l, it)).length;
+    }
+    if (lines && steps / lines > 0.2) res = { mode: 'none', why: 'steps' };
+    else if (red / lecs.length < 5) res = { mode: 'none', why: 'few' };
+  }
+  autoCache.set(ck, res);
+  return res;
+}
 const FORMULA_SUBJECT_RE = /エクセル|excel|exl|統計|数学|算数|会計|簿記|財務|情報処理|プログラミング|計算|データ分析|経済数学/i;
 function subjectMode(sub) {
   const m = S.progress.subjectMode && S.progress.subjectMode[sub];
   if (m) return m;
-  if (/エクセル|excel|exl/i.test(sub || '')) return 'none';
-  return FORMULA_SUBJECT_RE.test(sub || '') ? 'formula' : 'red';
+  return autoMode(sub).mode;
 }
 const genCache = new Map();
 function genFormulaItems(l) {
@@ -1155,7 +1176,10 @@ function viewQuiz() {
     h += `<section class="subject"><div class="shead"><span class="sname" style="cursor:default"><span>${esc(sub)}</span><small>${lecs.length}回分</small></span>
       <div class="smode"><span class="hint">問題の作り方</span><div class="seg" role="group" aria-label="${esc(sub)}の問題の作り方"><button data-act="smode" data-sub="${esc(sub)}" data-v="red" aria-pressed="${sm === 'red'}">赤字の言葉</button><button data-act="smode" data-sub="${esc(sub)}" data-v="formula" aria-pressed="${sm === 'formula'}">式・公式</button><button data-act="smode" data-sub="${esc(sub)}" data-v="none" aria-pressed="${sm === 'none'}">出さない</button></div></div>
       ${lecs.length && sm !== 'none' ? `<div class="acts"><button class="btn small primary" data-act="start-sub" data-sub="${esc(sub)}">この教科をまとめて解く</button></div>` : ''}</div>`;
-    if (sm === 'none') { h += `<div class="lec-empty">この教科は問題を出しません。レジュメは本棚と検索で見られます。</div></section>`; continue; }
+    if (sm === 'none') {
+      const why = (S.progress.subjectMode && S.progress.subjectMode[sub]) ? '' : ({ name: '演習・実習などの授業なので、自動で問題なしにしています。', steps: 'レジュメが作業の手順中心なので、自動で問題なしにしています。', few: '赤字の言葉が少ないので、自動で問題なしにしています。' })[autoMode(sub).why] || '';
+      h += `<div class="lec-empty">この教科は問題を出しません。${why}レジュメは本棚と検索で見られます。問題がほしいときは、上の「赤字の言葉」を選んでください。</div></section>`; continue;
+    }
     if (!lecs.length) h += `<div class="lec-empty">まだレジュメがありません。本棚の「PDFを追加」から入れてください。</div>`;
     for (const l of lecs) {
       h += `<div class="lec"><div class="num">${l.num != null ? '第' + l.num + '回' : '—'}</div><div style="min-width:0"><div class="ttl">${esc(l.title || l.fileName || '(タイトルなし)')}</div></div>
