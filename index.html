@@ -99,6 +99,12 @@ h2.sec { font-size: 13px; letter-spacing: .12em; color: var(--muted); font-weigh
 .empty { text-align: center; color: var(--muted); padding: 28px 16px; background: var(--sheet); border: 1px dashed var(--rule); border-radius: 12px; }
 .drop { border: 2px dashed var(--rule); border-radius: 12px; padding: 18px; text-align: center; color: var(--muted); background: var(--sheet); }
 .drop.over { border-color: var(--red); color: var(--red); }
+.peek { font-size: 13px; }
+.peek summary { cursor: pointer; color: var(--navy); }
+.peek-pg { border-top: 1px solid var(--rule); padding-top: 6px; margin-top: 6px; }
+.peek-pg p { margin: 4px 0; }
+.peek mark { background: var(--redtint); color: var(--red); font-weight: 700; padding: 0 2px; }
+.pdfpage img { width: 100%; height: auto; display: block; }
 
 /* add sheet */
 .panel { background: var(--sheet); border: 1px solid var(--rule); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
@@ -343,7 +349,8 @@ function clip(before, after) {
   return [b.trimStart(), a.trimEnd()];
 }
 
-function buildLecture(pagesRuns) {
+function buildLecture(pagesRuns, opts = {}) {
+  // opts.each: every incoming line is its own bullet (text read from photos)
   const pages = [];
   const items = [];
   const seen = new Set();
@@ -367,7 +374,7 @@ function buildLecture(pagesRuns) {
     const bullets = [];
     kept.forEach((l, i) => {
       const s = textOf(l).trim();
-      const startsNew = i <= 1 || /^[Ø➢▶・●■◆（(①-⑳]/.test(s) || /[。」]$/.test(textOf(bullets[bullets.length - 1] || []).trim());
+      const startsNew = opts.each || i <= 1 || /^[Ø➢▶・●■◆（(①-⑳]/.test(s) || /[。」]$/.test(textOf(bullets[bullets.length - 1] || []).trim());
       if (startsNew || !bullets.length) bullets.push([]);
       const b = bullets[bullets.length - 1];
       for (const r of l) {
@@ -388,7 +395,7 @@ function buildLecture(pagesRuns) {
         if (!ans || STOP.test(ans) || ans.length > 30) return;
         if (full.trim().length - ans.length < 4) return; // no context
         if (redLen / full.trim().length > 0.85) return;
-        if (full.length > 50 && !/[、。,]/.test(full)) return; // diagram labels
+        if (!opts.each && full.length > 50 && !/[、。,]/.test(full)) return; // diagram labels
         const before = segs.slice(0, si).map((x) => x[0]).join('');
         const after = segs.slice(si + 1).map((x) => x[0]).join('');
         const key = before + '|' + ans + '|' + after;
@@ -495,7 +502,7 @@ function loginView() {
   const err = S.authErr ? `<p class="err">${esc(S.authErr)}</p>` : '';
   return `<section class="intro login"><div class="intro-head"><h2>レジュ君へようこそ</h2></div>
     <ol class="steps">
-      <li><span class="no">①</span><div><b>レジュメをまとめることができる</b><p>授業のPDFを入れると、教科ごとのフォルダに第1回、第2回…と並びます。</p></div></li>
+      <li><span class="no">①</span><div><b>レジュメをまとめることができる</b><p>授業のPDFや、紙のプリント・メモの写真を入れると、教科ごとのフォルダに第1回、第2回…と並びます。</p></div></li>
       <li><span class="no">②</span><div><b>まとめたものを問題形式にしてくれる</b><p>赤字は穴埋め問題に、計算や式は4択問題になります。</p></div></li>
       <li><span class="no">③</span><div><b>用語検索することができる</b><p>キーワードや小テストの問題文から、どの回の何ページかすぐ分かります。</p></div></li>
     </ol>
@@ -523,7 +530,7 @@ async function doLogin() {
   }
 }
 async function saveLecture(lec) {
-  const body = { subject: lec.subject, num: lec.num, title: lec.title, fileName: lec.fileName || '', addedAt: lec.addedAt, pages: lec.pages, items: lec.items };
+  const body = { subject: lec.subject, num: lec.num, title: lec.title, fileName: lec.fileName || '', addedAt: lec.addedAt, pages: lec.pages, items: lec.items, kind: lec.kind || 'pdf' };
   if (S.storage === 'db') {
     try { await userCol().doc(lec.id).set(body); return; } catch (e) { if (!refused(e)) throw e; toLocal(); }
   }
@@ -561,7 +568,7 @@ function sampleLecture() {
 }
 function mergeLectures(docs) {
   const list = docs.slice();
-  for (const l of list) if (l.num == null && l.fileName) { const n = findNum(l.fileName.replace(/\.pdf$/i, '')); if (n != null) l.num = n; }
+  for (const l of list) if (l.num == null && l.fileName && l.kind !== 'photo') { const n = findNum(l.fileName.replace(/\.pdf$/i, '')); if (n != null) l.num = n; }
   list.sort((a, b) => (a.subject || '').localeCompare(b.subject || '', 'ja') || (a.num ?? 999) - (b.num ?? 999)
     || (a.fileName || a.title || '').localeCompare(b.fileName || b.title || '', 'ja', { numeric: true }));
   S.lectures = list;
@@ -664,8 +671,106 @@ async function handleFiles(files) {
   S.parsing = false; S.addTarget = null; render();
 }
 
+// ---------- photos of paper handouts and notes (read by Gemini via Firebase AI Logic) ----------
+const RECAPTCHA_SITE_KEY = '6LdACvYtAAAAAAyx-uVmsCe1cPjxNN6KkJ6QCLiC'; // site key registered in Firebase App Check
+const RECAPTCHA_ENTERPRISE = true; // registered in App Check as Fraud Defense (reCAPTCHA Enterprise)
+const GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash'];
+const FB_MOD = 'https://www.gstatic.com/firebasejs/12.19.0/';
+const MAX_PHOTOS = 10;
+let gem = null;
+async function loadGemini() {
+  if (gem) return gem;
+  const [appM, acM, aiM] = await Promise.all([import(FB_MOD + 'firebase-app.js'), import(FB_MOD + 'firebase-app-check.js'), import(FB_MOD + 'firebase-ai.js')]);
+  const app = appM.initializeApp(FIREBASE_CONFIG, 'gemini');
+  if (RECAPTCHA_SITE_KEY) acM.initializeAppCheck(app, { provider: (RECAPTCHA_ENTERPRISE ? new acM.ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY) : new acM.ReCaptchaV3Provider(RECAPTCHA_SITE_KEY)), isTokenAutoRefreshEnabled: true });
+  gem = { ai: aiM.getAI(app, { backend: new aiM.GoogleAIBackend() }), aiM };
+  return gem;
+}
+async function shrinkImage(file, max = 1600) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return await new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), 'image/jpeg', 0.85));
+  } finally { URL.revokeObjectURL(url); }
+}
+const blobB64 = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(b); });
+const PHOTO_PROMPT = `あなたは大学の授業で配られた紙のプリントや、手書きのメモ・ノートの写真を文字に起こす係です。
+写真1枚を1ページとして、写真の順番どおりに pages に入れてください。各ページは、上から順に、意味のまとまり（1文・1項目）ごとに lines に入れます。
+各行は segs（部分の配列）です。t は文字、m は強調かどうかです。
+- m=1 にするもの：赤ペン・赤字・色ペンで書かれた部分、蛍光マーカーで塗った部分、色ペンで線や丸で囲んだ語句、（　）や□などの空欄に書き込まれた答え。括弧そのものは含めず、中身の語句だけを m=1 にします。
+- m=0 にするもの：それ以外の普通の文字（黒・鉛筆・印刷の黒字）。
+- 空欄に何も書かれていないときは「（　）」を m=0 で入れます。
+- 1ページ目の最初の行は見出し（授業のテーマ）にします。見出しがなければ内容を短くまとめた見出しを作ります。
+- 図や表の中の細かいラベル、ページ番号、日付だけの行は省いてかまいません。
+- 氏名・学籍番号・電話番号など個人を特定する情報は書き起こさないでください。
+- 読めない文字は推測せず「□」にします。勝手に文章を足したり、要約したりしないでください。
+subject には教科名、num には「第◯回」の数字、title には授業のテーマを入れます。写真から分からなければ空文字（num は 0）にします。`;
+async function geminiRead(blobs) {
+  const { ai, aiM } = await loadGemini();
+  const { Schema } = aiM;
+  const seg = Schema.object({ properties: { t: Schema.string(), m: Schema.integer() } });
+  const schema = Schema.object({
+    properties: {
+      subject: Schema.string(), num: Schema.integer(), title: Schema.string(),
+      pages: Schema.array({ items: Schema.object({ properties: { lines: Schema.array({ items: Schema.object({ properties: { segs: Schema.array({ items: seg }) } }) }) } }) }),
+    },
+  });
+  const parts = [{ text: PHOTO_PROMPT }];
+  for (const b of blobs) parts.push({ inlineData: { mimeType: 'image/jpeg', data: await blobB64(b) } });
+  let last = null;
+  for (const name of GEMINI_MODELS) {
+    try {
+      const model = aiM.getGenerativeModel(ai, { model: name, generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.1 } });
+      const r = await model.generateContent(parts);
+      const txt = r.response.text();
+      return JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
+    } catch (e) {
+      last = e;
+      if (!/not[ _-]?found|404|unsupported|is not supported/i.test(String(e && e.message))) break; // only a missing model is worth retrying with another
+    }
+  }
+  throw last;
+}
+function geminiErrMsg(e) {
+  const m = String((e && (e.code || '') + ' ' + (e.message || '')) || '');
+  if (/app[- ]?check|appcheck|recaptcha|unauthenticated|permission|403|api[- ]has[- ]not[- ]been|disabled/i.test(m)) return '写真を読む機能（Gemini）の準備がまだ終わっていません。管理者がFirebaseの設定を終えると使えるようになります。';
+  if (/quota|resource[_ ]exhausted|429|rate/i.test(m)) return '今日はGeminiで写真を読める回数の上限に達しました。時間をおいてもう一度お試しください。';
+  if (/safety|blocked/i.test(m)) return 'この写真は読み取れませんでした。別の写真でお試しください。';
+  if (/import|fetch|network|failed to load/i.test(m)) return '写真を読む機能を読み込めませんでした。ネット接続を確認して、もう一度お試しください。';
+  return '写真を読み取れませんでした。明るい場所で、プリント全体がまっすぐ写るように撮り直してみてください。';
+}
+async function handlePhotos(files) {
+  const imgs = [...files].filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name));
+  if (!imgs.length) { S.parseErr = '写真（画像ファイル）を選んでください。'; render(); return; }
+  if (imgs.length > MAX_PHOTOS) { S.parseErr = `写真は1回に${MAX_PHOTOS}枚まで選べます。`; render(); return; }
+  S.parsing = 'photo'; S.parseErr = ''; render();
+  try {
+    const blobs = [];
+    for (const f of imgs) blobs.push(await shrinkImage(f));
+    const data = await geminiRead(blobs);
+    const pagesRuns = (data.pages || []).map((pg, i) => {
+      const runs = [];
+      for (const ln of pg.lines || []) { for (const s of ln.segs || []) if (s && s.t) runs.push({ t: String(s.t), red: s.m === 1 }); runs.push({ t: '\n' }); }
+      return { p: i + 1, runs };
+    });
+    const lec = buildLecture(pagesRuns, { each: true });
+    const chars = lec.pages.reduce((n, pg) => n + pg.lines.reduce((m, l) => m + l.reduce((k, s) => k + s[0].length, 0), 0), 0);
+    if (chars < 10) throw new Error('empty');
+    const d = new Date();
+    const subject = S.addTarget || matchSubject(norm(data.subject || '').trim() || '未分類');
+    S.pending.push({ kind: 'photo', subject, num: data.num > 0 ? data.num : null, title: norm(data.title || '').trim() || (lec.pages[0] && lec.pages[0].title) || '',
+      fileName: `写真 ${d.getMonth() + 1}/${d.getDate()}（${blobs.length}枚）`, pages: lec.pages, items: lec.items, numPages: blobs.length, photos: blobs, key: Math.random().toString(36).slice(2) });
+  } catch (e) {
+    S.parseErr = e && e.message === 'empty' ? '写真から文字を読み取れませんでした。明るい場所で、プリント全体がまっすぐ写るように撮り直してみてください。' : geminiErrMsg(e);
+  }
+  S.parsing = false; S.addTarget = null; render();
+}
+
 // ---------- helpers ----------
-const itemKey = (lecId, i) => lecId + ':' + i;
+const itemKey =(lecId, i) => lecId + ':' + i;
 function lecStats(lec) {
   let seen = 0, right = 0;
   lec.items.forEach((_, i) => { const s = S.progress.stats[itemKey(lec.id, i)]; if (s) { seen++; if (s[0] > 0 && s[2] === 1) right++; } });
@@ -812,7 +917,7 @@ function introPanel() {
   return `<section class="intro" aria-labelledby="intro-h">
     <div class="intro-head"><h2 id="intro-h">レジュ君の使い方</h2><button class="btn small ghost" data-act="intro-hide">閉じる</button></div>
     <ol class="steps">
-      <li><span class="no">①</span><div><b>レジュメをまとめることができる</b><p>授業のPDFを入れると、教科ごとのフォルダに第1回、第2回…と並びます。</p><button class="btn small" data-act="intro-add">PDFを追加する</button></div></li>
+      <li><span class="no">①</span><div><b>レジュメをまとめることができる</b><p>授業のPDFや、紙のプリント・メモの写真を入れると、教科ごとのフォルダに第1回、第2回…と並びます。</p><button class="btn small" data-act="intro-add">PDFを追加する</button></div></li>
       <li><span class="no">②</span><div><b>まとめたものを問題形式にしてくれる</b><p>赤字は穴埋め問題に、エクセルの式や計算は4択問題になります。</p><button class="btn small" data-act="intro-quiz">問題を解く</button></div></li>
       <li><span class="no">③</span><div><b>用語検索することができる</b><p>キーワードを入れると、どの回の何ページに出てきたかすぐ分かります。小テストの問題から、関係するページを開くこともできます。</p><button class="btn small" data-act="intro-search">用語を検索する</button></div></li>
     </ol>
@@ -821,8 +926,8 @@ function introPanel() {
 function viewLib() {
   let h = introPanel();
   if (S.storage === 'local' && S.ready) h += `<p class="notice">ログインしていないので、レジュメと成績はこのブラウザの中だけに保存されます。右上の「ログイン」から、スマホとパソコンで同じ本棚を使えます。</p>`;
-  h += `<div class="drop" id="drop"><div class="row" style="justify-content:center"><label class="btn primary" for="file" data-act="add-any">PDFを追加</label><input id="file" type="file" accept="application/pdf,.pdf" multiple hidden></div><div style="margin-top:6px;font-size:13px">ここにドラッグしてもOK。保存するときに教科を選べます。赤字は自動で穴埋め問題になります。</div></div>`;
-  if (S.parsing) h += `<p class="notice">PDFを読み取っています…</p>`;
+  h += `<div class="drop" id="drop"><div class="row" style="justify-content:center"><label class="btn primary" for="file" data-act="add-any">PDFを追加</label><input id="file" type="file" accept="application/pdf,.pdf" multiple hidden><label class="btn" for="photo" data-act="add-any">写真を追加（紙・メモ）</label><input id="photo" type="file" accept="image/*" multiple hidden></div><div style="margin-top:6px;font-size:13px">ここにドラッグしてもOK。保存するときに教科を選べます。赤字は自動で穴埋め問題になります。</div><div class="hint" style="margin-top:4px">紙のプリントや手書きのメモは写真で入れられます（1回分は${MAX_PHOTOS}枚までまとめて選べます）。赤ペン・マーカー・（　）に書いた答えが問題になります。写真はGoogleのGeminiで読み取るので、名前や学籍番号は写さないでください。</div></div>`;
+  if (S.parsing) h += `<p class="notice">${S.parsing === 'photo' ? 'Geminiが写真を読んでいます…（30秒ほどかかることがあります）' : 'PDFを読み取っています…'}</p>`;
   if (S.parseErr) h += `<p class="err">${esc(S.parseErr)}</p>`;
   for (const p of S.pending) h += pendingPanel(p);
   if (!S.ready) return h + `<p class="notice">本棚を読み込んでいます…</p>`;
@@ -837,7 +942,7 @@ function viewLib() {
     h += `<section class="subject ${closed ? 'closed' : ''}"><div class="shead">`;
     if (S.renaming === sub) h += `<form class="row grow" id="renameform" data-sub="${esc(sub)}"><input id="rename" class="inp" value="${esc(sub)}" aria-label="教科名"><button class="btn small primary" type="submit">変更</button><button class="btn small ghost" type="button" data-act="rename-cancel">やめる</button></form>`;
     else h += `<button class="sname" data-act="toggle" data-sub="${esc(sub)}" aria-expanded="${!closed}"><span class="caret" aria-hidden="true">${closed ? '▸' : '▾'}</span><span>${esc(sub)}</span><small>${lecs.length}回分</small></button>
-      <div class="acts"><button class="btn small primary" data-act="add-to" data-sub="${esc(sub)}">PDFを追加</button><button class="btn small ghost" data-act="rename" data-sub="${esc(sub)}">名前を変更</button>${lecs.length ? '' : `<button class="btn small ghost" data-act="del-sub" data-sub="${esc(sub)}">削除</button>`}</div>`;
+      <div class="acts"><button class="btn small primary" data-act="add-to" data-sub="${esc(sub)}">PDFを追加</button><button class="btn small" data-act="photo-to" data-sub="${esc(sub)}">写真を追加</button><button class="btn small ghost" data-act="rename" data-sub="${esc(sub)}">名前を変更</button>${lecs.length ? '' : `<button class="btn small ghost" data-act="del-sub" data-sub="${esc(sub)}">削除</button>`}</div>`;
     h += `</div>`;
     if (closed) { h += `</section>`; continue; }
     if (!lecs.length) h += `<div class="lec-empty">まだレジュメがありません。「PDFを追加」から、この教科の授業PDFを入れてください。</div>`;
@@ -857,12 +962,13 @@ function viewLib() {
 function pendingPanel(p) {
   const subs = subjects(); if (!subs.includes(p.subject)) subs.push(p.subject);
   return `<section class="panel" data-key="${p.key}"><h3>${esc(p.fileName)}</h3>
-    <div style="font-size:13px;color:var(--muted)">${p.numPages}ページを読み取り、赤字から <b style="color:var(--red)">${p.items.length}問</b> 作りました。教科と回を確認して保存してください。</div>
+    <div style="font-size:13px;color:var(--muted)">${p.kind === 'photo' ? `写真${p.numPages}枚を読み取り、赤ペン・マーカー・空欄から <b style="color:var(--red)">${p.items.length}問</b> 作りました。手書きの文字は読みまちがいがあるかもしれないので、保存したあと「テキスト・赤シート」で確かめてください。` : `${p.numPages}ページを読み取り、赤字から <b style="color:var(--red)">${p.items.length}問</b> 作りました。`}教科と回を確認して保存してください。</div>
     <div class="fields">
       <label class="f">教科<select id="sub-${p.key}">${subs.map((s) => `<option ${s === p.subject ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label>
       <label class="f">第何回<input id="num-${p.key}" type="number" min="0" inputmode="numeric" value="${p.num ?? ''}"></label>
       <label class="f full">タイトル<input id="ttl-${p.key}" value="${esc(p.title)}"></label>
     </div>
+    ${p.kind === 'photo' ? `<details class="peek"><summary>読み取った内容を見る</summary>${p.pages.map((pg) => `<div class="peek-pg"><b>${pg.p}枚目</b>${pg.lines.map((l) => `<p>${l.map(([t, r]) => r ? `<mark>${esc(t)}</mark>` : esc(t)).join('')}</p>`).join('')}</div>`).join('')}</details>` : ''}
     <div class="row"><button class="btn primary" data-act="save-pending" data-key="${p.key}">本棚に保存</button><button class="btn ghost" data-act="drop-pending" data-key="${p.key}">やめる</button></div>
   </section>`;
 }
@@ -893,6 +999,11 @@ async function mountPdf(host, id) {
   try { blob = await IDB.get(id); } catch { }
   if (pdfHostEl !== host) return;
   if (!blob) { pdfHostEl = null; S.noPdf[id] = true; S.lecMode = 'text'; render(); return; }
+  if (blob.photos) {
+    if (pdfObs) pdfObs.disconnect();
+    host.innerHTML = blob.photos.map((b, i) => `<figure class="pdfpage" id="pg-${i + 1}"><img alt="${i + 1}枚目の写真" src="${URL.createObjectURL(b)}"><figcaption>${i + 1}枚目</figcaption></figure>`).join('');
+    scrollToPending(); return;
+  }
   try {
     const lib = await loadPdfjs();
     if (pdfDoc) { try { pdfDoc.destroy(); } catch { } }
@@ -923,7 +1034,7 @@ function viewLecture() {
   if (!l) { S.openLec = null; return viewLib(); }
   let h = `<div class="viewer-head"><button class="btn small ghost" data-act="back">← 本棚</button>
     <h2>${esc(l.subject)} ${l.num != null ? '第' + l.num + '回' : ''}<br><span style="font-size:15px;font-weight:500">${esc(l.title || '')}</span></h2></div>
-    <div class="row"><div class="seg" role="group" aria-label="表示"><button data-act="mode-pdf" aria-pressed="${S.lecMode === 'pdf'}">原本（PDF）</button><button data-act="mode-text" aria-pressed="${S.lecMode === 'text'}">テキスト・赤シート</button></div>
+    <div class="row"><div class="seg" role="group" aria-label="表示"><button data-act="mode-pdf" aria-pressed="${S.lecMode === 'pdf'}">${l.kind === 'photo' ? '原本（写真）' : '原本（PDF）'}</button><button data-act="mode-text" aria-pressed="${S.lecMode === 'text'}">テキスト・赤シート</button></div>
     ${subjectMode(l.subject) === 'none' ? '' : `<button class="btn small primary" data-act="solve" data-id="${l.id}">この回を解く</button>`}
     ${S.confirmDel === l.id ? `<span class="confirm">本当に消しますか？<button class="btn small" data-act="del-yes" data-id="${l.id}">消す</button><button class="btn small ghost" data-act="del-no">やめる</button></span>` : `<button class="btn small ghost" data-act="del" data-id="${l.id}">本棚から消す</button>`}</div>
     ${matchBanner(l)}
@@ -932,7 +1043,8 @@ function viewLecture() {
     <div class="row">${l.builtin ? '' : `<button class="btn small" data-act="edit-meta" aria-expanded="${S.editMeta === l.id}">回・タイトルを直す</button>`}<button class="btn small" data-act="manage" aria-expanded="${S.manage === l.id}">${S.manage === l.id ? '問題の一覧を閉じる' : `問題の一覧・整理`}</button></div>
     ${S.manage === l.id ? manageList(l) : ''}`;
   if (S.lecMode === 'pdf') return h + `<div id="pdfhost" class="list"></div>`;
-  if (S.noPdf[l.id]) h += `<p class="notice row">この端末にはPDFの原本がないので、文字だけ表示しています。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
+  if (S.noPdf[l.id] && l.kind === 'photo') h += `<p class="notice">写真の原本は、写真を入れた端末にだけ保存されています。この端末では文字だけ表示しています。</p>`;
+  else if (S.noPdf[l.id]) h += `<p class="notice row">この端末にはPDFの原本がないので、文字だけ表示しています。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
   h += `<label class="toggle"><input type="checkbox" id="sheet" ${S.sheetOn ? 'checked' : ''}> 赤シートをかける（赤字をタップでめくる）</label>
     <div class="list ${S.sheetOn ? 'sheet-on' : ''}">`;
   for (const pg of l.pages) {
@@ -1082,14 +1194,15 @@ function autoMode(sub) {
   const ck = sub + '|' + lecs.map((l) => l.id + ':' + l.items.length).join(',');
   if (autoCache.has(ck)) return autoCache.get(ck);
   let res = { mode: FORMULA_SUBJECT_RE.test(sub || '') ? 'formula' : 'red', why: '' };
-  if (lecs.length) {
+  const pdfs = lecs.filter((l) => l.kind !== 'photo'); // photos of notes are judged by the user, not by these ratios
+  if (pdfs.length) {
     let lines = 0, steps = 0, red = 0;
-    for (const l of lecs) {
+    for (const l of pdfs) {
       for (const pg of l.pages) for (const ln of pg.lines) { const t = ln.map((x) => x[0]).join(''); if (t.length > 6) { lines++; if (STEP_RE.test(t)) steps++; } }
       red += l.items.filter((it) => !it.x && !isAdmin(l, it)).length;
     }
     if (lines && steps / lines > 0.2) res = { mode: 'none', why: 'steps' };
-    else if (red / lecs.length < 5) res = { mode: 'none', why: 'few' };
+    else if (red / pdfs.length < 5) res = { mode: 'none', why: 'few' };
   }
   autoCache.set(ck, res);
   return res;
@@ -1405,7 +1518,8 @@ document.addEventListener('click', async (e) => {
   if (act === 'intro-add') { S.addTarget = null; $('#file').click(); return; }
   if (act === 'intro-quiz') { S.view = 'quiz'; S.openLec = null; render(); window.scrollTo(0, 0); return; }
   if (act === 'intro-search') { S.view = 'search'; S.openLec = null; S.focusSearch = true; render(); window.scrollTo(0, 0); return; }
-  if (act === 'mode-pdf') { S.lecMode = 'pdf'; if (S.noPdf[S.openLec]) { S.reattachId = S.openLec; $('#refile').click(); return; } render(); return; }
+  if (act === 'photo-to') { S.addTarget = b.dataset.sub; $('#photo').click(); return; }
+  if (act === 'mode-pdf') { S.lecMode = 'pdf'; if (S.noPdf[S.openLec]) { if ((S.lectures.find((x) => x.id === S.openLec) || {}).kind === 'photo') { S.lecMode = 'text'; render(); return; } S.reattachId = S.openLec; $('#refile').click(); return; } render(); return; }
   if (act === 'mode-text') { S.lecMode = 'text'; render(); return; }
   if (act === 'reattach') { S.reattachId = b.dataset.id; $('#refile').click(); return; }
   if (act === 'match-close') { S.matchInfo = null; render(); return; }
@@ -1455,11 +1569,11 @@ document.addEventListener('click', async (e) => {
   else if (act === 'save-pending') {
     const p = S.pending.find((x) => x.key === b.dataset.key); if (!p) return;
     const k = p.key;
-    const lec = { id: 'lec-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), subject: ($('#sub-' + k).value.trim() || '未分類'), num: $('#num-' + k).value === '' ? null : parseInt($('#num-' + k).value, 10), title: $('#ttl-' + k).value.trim(), fileName: p.fileName, addedAt: new Date().toISOString(), pages: p.pages, items: p.items };
+    const lec = { id: 'lec-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), subject: ($('#sub-' + k).value.trim() || '未分類'), num: $('#num-' + k).value === '' ? null : parseInt($('#num-' + k).value, 10), title: $('#ttl-' + k).value.trim(), fileName: p.fileName, addedAt: new Date().toISOString(), pages: p.pages, items: p.items, kind: p.kind || 'pdf' };
     b.disabled = true;
     try {
       await saveLecture(lec);
-      try { await IDB.put(lec.id, p.file); } catch { }
+      try { await IDB.put(lec.id, p.photos ? { photos: p.photos } : p.file); } catch { }
       if (S.canExplain) setTimeout(() => polishLecture(lec.id), 300);
       if (!subjectList().includes(lec.subject)) setSubjects([...subjectList(), lec.subject]);
       S.pending = S.pending.filter((x) => x.key !== k);
@@ -1562,6 +1676,7 @@ document.addEventListener('change', async (e) => {
     S.reattachId = null; render(); return;
   }
   if (t.id === 'file') { handleFiles(t.files); t.value = ''; }
+  if (t.id === 'photo') { const fs = [...(t.files || [])]; t.value = ''; if (fs.length) handlePhotos(fs); }
   else if (t.id === 'sheet') { S.sheetOn = t.checked; render(); }
   else if (t.id === 'cfg-sub') { S.quizCfg.subject = t.value; S.quizCfg.lec = 'all'; render(); }
   else if (t.id === 'cfg-lec') { S.quizCfg.lec = t.value; render(); }
@@ -1584,7 +1699,7 @@ document.addEventListener('keydown', (e) => {
 });
 ['dragover', 'dragenter'].forEach((ev) => document.addEventListener(ev, (e) => { const d = e.target.closest && e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.add('over'); } }));
 document.addEventListener('dragleave', (e) => { const d = e.target.closest && e.target.closest('#drop'); if (d) d.classList.remove('over'); });
-document.addEventListener('drop', (e) => { const d = e.target.closest && e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.remove('over'); handleFiles(e.dataTransfer.files); } });
+document.addEventListener('drop', (e) => { const d = e.target.closest && e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.remove('over'); const fs = [...e.dataTransfer.files]; if (fs.some((f) => /^image\//.test(f.type))) handlePhotos(fs.filter((f) => /^image\//.test(f.type))); else handleFiles(fs); } });
 init();
 </script>
 
