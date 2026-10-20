@@ -474,7 +474,7 @@ const S = {
   quiz: null, quizCfg: { subject: '', lec: 'all', mode: 'all', answer: 'auto' },
   q: '',
   confirmDel: null,
-  quizMsg: '', polishing: {}, aiGen: {}, addTarget: null, renaming: null, manage: null, editMeta: null, canImage: false, matchInfo: null, quizText: '', finding: '', findMsg: '', canExplain: false, lookup: {}, introHidden: false, lecMode: 'pdf', noPdf: {}, reattachId: null, newSub: '', collapsed: {}, libMsg: '', exp: {},
+  quizMsg: '', polishing: {}, aiGen: {}, review: {}, addTarget: null, renaming: null, manage: null, editMeta: null, canImage: false, matchInfo: null, quizText: '', finding: '', findMsg: '', canExplain: false, lookup: {}, introHidden: false, lecMode: 'pdf', noPdf: {}, reattachId: null, newSub: '', collapsed: {}, libMsg: '', exp: {},
 };
 let db = null, uid = null;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -546,6 +546,7 @@ async function doLogin() {
 async function saveLecture(lec) {
   const body = { subject: lec.subject, num: lec.num, title: lec.title, fileName: lec.fileName || '', addedAt: lec.addedAt, pages: lec.pages, items: lec.items, kind: lec.kind || 'pdf' };
   if (lec.ai) body.ai = lec.ai;
+  if (lec.reviewed) body.reviewed = 1;
   if (S.storage === 'db') {
     try { await userCol().doc(lec.id).set(body); return; } catch (e) { if (!refused(e)) throw e; toLocal(); }
   }
@@ -809,6 +810,7 @@ function aiPrompt(l) {
 - それ以外の授業なら：大事な用語の意味、具体例、似た用語との違いを問う問題にします。
 - 計算の答えは、必ず自分で計算し直して確かめてください。正解はちょうど1つにします。
 - レジュメに書かれていない知識が必要な問題は作りません。出席・成績・課題・提出の連絡は問題にしません。
+- 表紙、「本日の講義内容」「アジェンダ」「目次」など、その日にやることを並べただけのページからは問題を作りません。
 
 書き方：
 - q：問題文。表のデータは「A1=80、A2=65、A3=90」のように文字で書きます。
@@ -1037,7 +1039,7 @@ function viewHelp() {
     <p>うまく読める写真のコツ：</p><ul><li>明るい場所で、プリント全体がまっすぐ写るように撮る</li><li>1枚の写真に1ページずつ</li><li>名前や学籍番号が写らないようにする</li></ul>
     <p>問題になるのは次のところです。</p>
     ${tbl(['入れたもの', '問題になるところ'], [['PDF', '赤字'], ['写真（紙・メモ）', '赤ペン・色ペン、蛍光マーカー、丸で囲んだ語句、（　）に書いた答え']])}
-    <p>出席・成績・提出期限などの連絡用の赤字は、問題にしません。</p>`)}
+    <p>表紙や「本日の講義内容」「アジェンダ」のページの色文字、図や表のラベル、見出しの一部、出席・成績・提出期限などの連絡用の赤字は、問題にしません。保存したあとは、Geminiが残った問題を1問ずつ見直して、関係ない問題を外し、文章を読みやすく整えます（前に入れたレジュメは、レジュメの画面の「Geminiで問題を見直す」から）。</p>`)}
   ${sec('レジュメを見る', `<p>本棚で「レジュメ」を押すと、その回の中身を見られます。上のボタンで、見方を2つから選べます。</p>
     <ul><li><b>原本（PDF・写真）</b>：入れたものをそのまま表示します。</li><li><b>テキスト・赤シート</b>：文字だけを表示します。「赤シートをかける」にチェックを入れると赤字が隠れて、タップするとめくれます。</li></ul>
     <p>原本は、入れた端末の中だけに保存されます。別の端末では文字だけが表示されますが、PDFなら「PDFを選んで原本を表示」でもう一度入れられます。</p>
@@ -1108,9 +1110,10 @@ function viewLib() {
   return h;
 }
 function pendingPanel(p) {
+  const nq = p.items.filter((it) => !isAdmin(p, it)).length;
   const subs = subjects(); if (!subs.includes(p.subject)) subs.push(p.subject);
   return `<section class="panel" data-key="${p.key}"><h3>${esc(p.fileName)}</h3>
-    <div style="font-size:13px;color:var(--muted)">${p.kind === 'photo' ? `写真${p.numPages}枚を読み取り、赤ペン・マーカー・空欄から <b style="color:var(--red)">${p.items.length}問</b> 作りました。手書きの文字は読みまちがいがあるかもしれないので、保存したあと「テキスト・赤シート」で確かめてください。` : `${p.numPages}ページを読み取り、赤字から <b style="color:var(--red)">${p.items.length}問</b> 作りました。`}教科と回を確認して保存してください。</div>
+    <div style="font-size:13px;color:var(--muted)">${p.kind === 'photo' ? `写真${p.numPages}枚を読み取り、赤ペン・マーカー・空欄から <b style="color:var(--red)">${nq}問</b> 作りました。手書きの文字は読みまちがいがあるかもしれないので、保存したあと「テキスト・赤シート」で確かめてください。` : `${p.numPages}ページを読み取り、赤字から <b style="color:var(--red)">${nq}問</b> 作りました。`}教科と回を確認して保存してください。</div>
     <div class="fields">
       <label class="f">教科<select id="sub-${p.key}">${subs.map((s) => `<option ${s === p.subject ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label>
       <label class="f">第何回<input id="num-${p.key}" type="number" min="0" inputmode="numeric" value="${p.num ?? ''}"></label>
@@ -1190,6 +1193,7 @@ function viewLecture() {
     ${matchBanner(l)}
     ${S.editMeta === l.id ? metaForm(l) : ''}
     ${polishRow(l)}
+    ${reviewRow(l)}
     ${aiRow(l)}
     <div class="row">${l.builtin ? '' : `<button class="btn small" data-act="edit-meta" aria-expanded="${S.editMeta === l.id}">回・タイトルを直す</button>`}<button class="btn small" data-act="manage" aria-expanded="${S.manage === l.id}">${S.manage === l.id ? '問題の一覧を閉じる' : `問題の一覧・整理`}</button></div>
     ${S.manage === l.id ? manageList(l) : ''}`;
@@ -1229,7 +1233,7 @@ function metaForm(l) {
 }
 function manageList(l) {
   const hiddenN = l.items.filter((it, i) => S.progress.hidden[itemKey(l.id, i)] || isAdmin(l, it)).length;
-  let h = `<section class="panel"><h3>問題の一覧</h3><div style="font-size:13px;color:var(--muted)">「消す」を押した問題は出題されなくなります。「戻す」でいつでも元に戻せます。出席・成績・提出期限などの連絡の赤字は、最初から問題にしていません。</div><div class="mlist">`;
+  let h = `<section class="panel"><h3>問題の一覧</h3><div style="font-size:13px;color:var(--muted)">「消す」を押した問題は出題されなくなります。「戻す」でいつでも元に戻せます。表紙や「本日の講義内容」のページの赤字と、出席・成績・提出期限などの連絡の赤字は、最初から問題にしていません。</div><div class="mlist">`;
   l.items.forEach((it, i) => {
     if (isAdmin(l, it)) return;
     const k = itemKey(l.id, i), off = !!S.progress.hidden[k];
@@ -1240,8 +1244,40 @@ function manageList(l) {
 }
 // questions about attendance, grading, deadlines and other class admin are never asked
 const ADMIN_RE = /毎回の出席|出席(点|率|管理|確認|を取|カード|状況|日数|回数)|欠席|遅刻|成績評価|評価方法|評価基準|成績の付け|加点|減点|単位の|単位を|配点|提出|締切|締め切り|期限|manaba|履修|再試|ワークシートに|グループワーク|授業外課題|シラバス|オフィスアワー|座席|私語/i;
-function isAdmin(lec, it) {
+// cover and "today's agenda" slides only list what the class will cover: no questions from them
+const COVER_RE = /本日の(講義|授業)?(内容|アジェンダ|テーマ|流れ|予定|目標|目的|メニュー)|今日の(講義|授業)?(内容|流れ|テーマ|予定|目標)|アジェンダ|agenda|目次|もくじ|講義(内容|の流れ|の予定|計画|概要)|授業(内容|の流れ|の予定|計画|概要|の進め方)|連絡事項|お知らせ|自己紹介|講師紹介|プロフィール|ガイダンス/i;
+function isCoverPage(lec, pg) {
+  if (!pg) return false;
+  if (lec.kind !== 'photo' && pg.p === 1) return true; // title slide of a PDF
+  return COVER_RE.test(pg.title || '');
+}
+// red text that is not worth a question: headings, chart/table labels, fragments, emphasis words
+const EMPH_RE = /^(重要|超重要|注意|要注意|ポイント|必須|必ず|大事|復習|予習|まとめ|例|例題|答え|解答|正解|ヒント|NEW|new|POINT|Point|Check|CHECK|[QA]\d*|問\d*|※.*)$/;
+const kanaRatio = (s) => { const t = s.replace(/[\s・、。,.()（）「」『』]/g, ''); return t ? (t.match(/[ぁ-ん]/g) || []).length / t.length : 0; };
+function isJunk(lec, it) {
+  if (it.x || it.ai || it.g) return false;
+  const a = String(it.a || '').trim();
+  const full = (it.b || '') + a + (it.f || '');
+  const ctx = ((it.t || '') + (it.b || '') + (it.f || '')).replace(/[\s、。,.・…「」『』()（）:：!！?？]/g, '');
+  if (EMPH_RE.test(a)) return true;
+  if (/^[をがはにでのとへやもより]/.test(a)) return true;          // starts in the middle of a sentence
+  if (/[?？]{2,}/.test(full)) return true;                          // a question shown in class, answer hidden
+  if (ctx.length < 6) return true;                                  // too little around the blank (slide title counts) to answer
+  if (!/。/.test(full) && full.length >= 8 && kanaRatio(full) < 0.1) return true; // labels of a chart or table run together
   const pg = lec.pages.find((x) => x.p === it.p);
+  if (pg && !it.t && pg.lines[0]) {                                 // red word inside the slide's heading
+    const head = pg.lines[0].map((s) => s[0]).join('');
+    if (head.includes(a) && !(/[、。]/.test(head) && head.length >= 12)) return true;
+  }
+  const i = lec.items.indexOf(it);                                  // the same word on the same slide only once
+  if (i > 0 && lec.items.slice(0, i).some((o) => o.p === it.p && o.a.trim() === a && !o.x)) return true;
+  return false;
+}
+function isAdmin(lec, it) {
+  if (it.bad) return true;                       // Gemini judged it not worth asking
+  const pg = lec.pages.find((x) => x.p === it.p);
+  if (!it.ai && isCoverPage(lec, pg)) return true;
+  if (isJunk(lec, it)) return true;
   return ADMIN_RE.test([pg ? pg.title : '', it.t || '', it.b, it.a, it.f].join(' '));
 }
 // light clean-up of question text taken from slides
@@ -1269,6 +1305,73 @@ function tidy(s, side) {
 }
 const qb = (it) => (it.q ? it.q.b : tidy(it.b, 'b'));
 const qf = (it) => (it.q ? it.q.f : tidy(it.f, 'f'));
+
+// ---------- Gemini checks every red-text question: drops ones not worth asking, tidies the sentence ----------
+async function reviewLecture(id) {
+  const base = rawDocs.find((d) => d.id === id); if (!base || S.review[id] === 'working') return;
+  const items = base.items.map((it) => ({ ...it }));
+  const view = { ...base, items };
+  const todo = items.map((it, i) => ({ it, i })).filter(({ it }) => !it.x && !isAdmin(view, it));
+  if (!todo.length) { S.review[id] = 'done'; render(); return; }
+  S.review[id] = 'working'; render();
+  let changed = 0, err = null;
+  try {
+    const { aiM } = await loadGemini();
+    const { Schema } = aiM;
+    const schema = Schema.object({ properties: { r: Schema.array({ items: Schema.object({ properties: { i: Schema.integer(), k: Schema.integer(), b: Schema.string(), f: Schema.string() } }) }) } });
+    for (let k = 0; k < todo.length; k += 40) {
+      const batch = todo.slice(k, k + 40).map(({ it, i }) => {
+        const pg = base.pages.find((x) => x.p === it.p);
+        return { i, page: it.p, title: pg ? pg.title : '', b: it.b, a: it.a, f: it.f };
+      });
+      const prompt = `以下は、大学の授業スライド（${base.subject}）の色文字（赤字）から自動で作った穴埋め問題の候補です。a が答え、b が答えの前の文、f が後ろの文、title がそのスライドの見出しです。
+1問ずつ、小テストの勉強に役立つ問題かどうかを判断して、k に 1（残す）か 0（外す）を入れてください。
+
+外す（k=0）もの：
+- 表紙、「本日の講義内容」「アジェンダ」「目次」「前回の予告」など、その日にやることを並べただけのスライド
+- 出席・成績・課題・提出・連絡など、授業の中身ではないもの
+- 図や表のラベルを並べただけのもの、見出しの一部だけが色になっているもの
+- 答えが文の途中で切れているもの、前後を読んでも何が入るか考えようがないもの
+- 「重要」「ポイント」「注意」など、強調のための言葉
+
+残す（k=1）もの：授業の大事な用語、定義、人名・制度名、数値・年など、テストに出そうな中身。
+
+残す問題は、b と f を、意味を変えずに句読点の付いた自然な日本語の文に整えてください。
+- b と f に答え a の言葉を書かない。スライドにない情報は足さない
+- ページ番号・手順の番号・記号（●★など）は消す
+- 文末は「。」で終える
+外す問題は b と f を空文字にします。
+
+出力は JSON：{"r": [{"i": 番号, "k": 1か0, "b": "…", "f": "…"}]}
+
+問題：
+${JSON.stringify(batch)}`;
+      const out = await geminiJSON([{ text: prompt }], schema);
+      for (const r of (out && out.r) || []) {
+        const it = items[r && r.i]; if (!it || it.x) continue;
+        if (r.k === 0) { it.bad = 1; changed++; continue; }
+        delete it.bad;
+        const ans = it.a.trim(), nb = String(r.b || '').trim(), nf = String(r.f || '').trim();
+        if (ans.length >= 2 && (nb.includes(ans) || nf.includes(ans))) continue;
+        if ((nb + nf).replace(/[\s。、]/g, '').length < 3) continue;
+        it.q = { b: nb, f: nf }; changed++;
+      }
+    }
+  } catch (e) { err = e; }
+  if (changed) { try { await saveLecPatch(id, { items, reviewed: 1 }); } catch (e) { err = err || e; } }
+  else if (!err) { try { await saveLecPatch(id, { reviewed: 1 }); } catch { } }
+  S.review[id] = err && !changed ? aiErrMsg(err).replace('問題を作れませんでした', '問題を見直せませんでした').replace('問題を作れる', '問題を見直せる') : 'done';
+  render();
+}
+function reviewRow(l) {
+  if (l.builtin || !l.items.some((it) => !it.x)) return '';
+  const st = S.review[l.id];
+  if (st === 'working') return `<p class="notice">Geminiが問題を1問ずつ見直しています…（30秒ほどかかることがあります）</p>`;
+  const msg = st && st !== 'done' ? `<p class="err">${esc(st)}</p>` : '';
+  if (l.reviewed && st !== 'done') return msg;
+  if (st === 'done' || l.reviewed) return msg + `<p class="notice">Geminiが問題を見直しました。関係ない色文字の問題は外して、文章を読みやすく整えています。</p>`;
+  return msg + `<div class="row"><button class="btn small" data-act="review" data-id="${l.id}">Geminiで問題を見直す</button><span class="hint">関係ない色文字の問題を外して、文章を整えます。</span></div>`;
+}
 // rewrite questions into natural sentences with Claude (same meaning, answer kept out of the text)
 async function polishLecture(id) {
   const base = rawDocs.find((d) => d.id === id); if (!base || S.polishing[id] === 'working') return;
@@ -1689,6 +1792,7 @@ document.addEventListener('click', async (e) => {
   if (act === 'match-go') { if (!S.openLec) S.backY = window.scrollY; const i = Number(b.dataset.i); const c = S.matchInfo.cands[i]; S.curMatchI = i; S.curMatchP = c.p; if (S.openLec !== c.lecId) { pdfHostEl = null; S.lecMode = S.noPdf[c.lecId] ? 'text' : 'pdf'; } S.openLec = c.lecId; S.openPage = c.p; render(); return; }
   if (act === 'polish') { polishLecture(b.dataset.id); return; }
   if (act === 'ai-gen') { makeAiQuestions(b.dataset.id); return; }
+  if (act === 'review') { reviewLecture(b.dataset.id); return; }
   if (act === 'edit-meta') { S.editMeta = S.editMeta === S.openLec ? null : S.openLec; render(); return; }
   if (act === 'login') { doLogin(); return; }
   if (act === 'guest') { S.guest = true; LS.set('rs-guest', true); loadLocal(); return; }
@@ -1740,6 +1844,7 @@ document.addEventListener('click', async (e) => {
       await saveLecture(lec);
       try { await IDB.put(lec.id, p.photos ? { photos: p.photos } : p.file); } catch { }
       if (S.canExplain) setTimeout(() => polishLecture(lec.id), 300);
+      else setTimeout(() => reviewLecture(lec.id), 300);
       if (!subjectList().includes(lec.subject)) setSubjects([...subjectList(), lec.subject]);
       S.pending = S.pending.filter((x) => x.key !== k);
       if (!rawDocs.some((d) => d.id === lec.id)) { rawDocs.push(lec); mergeLectures(rawDocs); }
