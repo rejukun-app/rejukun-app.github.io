@@ -163,6 +163,9 @@ label.f input, label.f select { border: 1px solid var(--rule); background: var(-
 .mask { color: var(--red); font-weight: 700; }
 .sheet-fab { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 20; border: 0; border-radius: 999px; padding: 12px 18px; font: inherit; font-size: 14px; font-weight: 700; color: #fff; background: var(--navy); box-shadow: 0 4px 14px rgba(0,0,0,.25); cursor: pointer; }
 .sheet-fab.on { background: var(--red); }
+.autosave { margin-top: 8px; font-size: 13px; }
+.saved { color: var(--good); border-color: var(--good); justify-content: space-between; }
+.linkbtn { border: 0; background: none; padding: 0; font: inherit; color: var(--navy); text-decoration: underline; cursor: pointer; }
 #sheetlist { padding-bottom: 56px; }
 .sheet-on .mask { background: var(--redsheet); color: transparent; border-radius: 3px; cursor: pointer; padding: 0 2px; }
 .sheet-on .mask.open { background: var(--redtint); color: var(--red); }
@@ -477,7 +480,7 @@ const S = {
   quiz: null, quizCfg: { subject: '', lec: 'all', mode: 'all', answer: 'auto' },
   q: '',
   confirmDel: null,
-  quizMsg: '', polishing: {}, aiGen: {}, review: {}, addTarget: null, renaming: null, manage: null, editMeta: null, canImage: false, matchInfo: null, quizText: '', finding: '', findMsg: '', canExplain: false, lookup: {}, introHidden: false, lecMode: 'pdf', noPdf: {}, reattachId: null, newSub: '', collapsed: {}, libMsg: '', exp: {},
+  quizMsg: '', polishing: {}, aiGen: {}, review: {}, autoSaved: [], autoSave: true, parseTotal: 0, parseDone: 0, addTarget: null, renaming: null, manage: null, editMeta: null, canImage: false, matchInfo: null, quizText: '', finding: '', findMsg: '', canExplain: false, lookup: {}, introHidden: false, lecMode: 'pdf', noPdf: {}, reattachId: null, newSub: '', collapsed: {}, libMsg: '', exp: {},
 };
 let db = null, uid = null;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -606,6 +609,7 @@ const refused = (e) => e && (e.code === 'permission-denied' || e.code === 'inval
 async function init() {
   S.collapsed = LS.get('rs-collapsed', {});
   S.sheetOn = LS.get('rs-sheet', true) !== false;
+  S.autoSave = LS.get('rs-autosave', true) !== false;
   S.introHidden = !!LS.get('rs-intro-hidden', false);
   S.exp = LS.get('rs-explain', {});
   { const qp = LS.get('rs-quiz-prefs', null); if (qp) { if (qp.answer) S.quizCfg.answer = qp.answer; if (qp.mode) S.quizCfg.mode = qp.mode; } }
@@ -675,21 +679,59 @@ async function parsePdf(file) {
   const textChars = lec.pages.reduce((n, pg) => n + pg.lines.reduce((m, l) => m + l.reduce((k, s) => k + s[0].length, 0), 0), 0);
   return { ...meta, fileName: file.name, pages: lec.pages, items: lec.items, textChars, numPages: doc.numPages };
 }
+// which subject a new handout belongs to: the folder it was added to, its file name, then the words on its first pages
+function pickSubject(guess, text) {
+  if (S.addTarget) return { subject: S.addTarget, sure: true };
+  const list = subjects();
+  const byName = matchSubject(guess || '');
+  if (list.includes(byName)) return { subject: byName, sure: true };
+  const t = normAns(text || '');
+  const hit = list.filter((sb) => { const n = normAns(sb); return n.length >= 2 && t.includes(n); }).sort((a, b) => b.length - a.length)[0];
+  if (hit) return { subject: hit, sure: true };
+  return { subject: byName || '未分類', sure: false };
+}
+const pageText = (pages, n = 2) => pages.slice(0, n).map((pg) => [pg.title, ...pg.lines.map((l) => l.map((x) => x[0]).join(''))].join(' ')).join(' ');
+function findDup(p) {
+  return S.lectures.find((l) => !l.builtin && ((p.fileName && l.fileName === p.fileName && p.kind !== 'photo') || (p.num != null && l.subject === p.subject && l.num === p.num && (l.kind || 'pdf') === (p.kind || 'pdf'))));
+}
+// a new handout is saved without asking when we are sure of its subject and number and it is not already on the shelf
+async function settle(p) {
+  p.dup = !!findDup(p) || S.pending.some((q) => q.fileName === p.fileName && p.kind !== 'photo');
+  if (S.autoSave && p.sure && p.num != null && !p.dup) {
+    try { await savePending(p); S.autoSaved.push({ id: p.savedId, label: `${p.subject} 第${p.num}回` }); return; } catch (e) { S.parseErr = saveErrMsg(e); }
+  }
+  S.pending.push(p);
+}
 async function handleFiles(files) {
   const pdfs = [...files].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
   if (!pdfs.length) { S.parseErr = 'PDFファイルを選んでください。'; render(); return; }
-  S.parsing = true; S.parseErr = ''; render();
+  S.parsing = true; S.parseErr = ''; S.autoSaved = []; S.parseTotal = pdfs.length; S.parseDone = 0; render();
   for (const f of pdfs) {
     try {
       const r = await parsePdf(f);
-      if (r.textChars < 20) S.parseErr = `「${f.name}」は文字を読み取れませんでした。スキャン画像のPDFは今のところ対応していません。`;
-      else S.pending.push({ ...r, file: f, subject: S.addTarget || matchSubject(r.subject), key: Math.random().toString(36).slice(2) });
+      if (r.textChars < 20) S.parseErr = `「${f.name}」は文字を読み取れませんでした。スキャン画像のPDFは、ページを写真にして「写真を追加」から入れてください。`;
+      else { const ps = pickSubject(r.subject, pageText(r.pages)); await settle({ ...r, file: f, subject: ps.subject, sure: ps.sure, key: Math.random().toString(36).slice(2) }); }
     } catch (e) {
       S.parseErr = `「${f.name}」を読み込めませんでした。ネット接続を確認して、もう一度お試しください。`;
     }
+    S.parseDone++; render();
   }
   S.parsing = false; S.addTarget = null; render();
 }
+const saveErrMsg = (err) => (err && err.code === 'quota_exceeded') ? '保存できる量の上限に達しました。使わない回を消してから保存してください。' : ('保存できませんでした。' + (err && err.message ? err.message : ''));
+async function savePending(p) {
+  const lec = { id: 'lec-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), subject: p.subject || '未分類', num: p.num ?? null, title: p.title || '', fileName: p.fileName, addedAt: new Date().toISOString(), pages: p.pages, items: p.items, kind: p.kind || 'pdf' };
+  await saveLecture(lec);
+  try { await IDB.put(lec.id, p.photos ? { photos: p.photos } : p.file); } catch { }
+  if (S.canExplain) setTimeout(() => polishLecture(lec.id), 300);
+  else queueReview(lec.id);
+  if (!subjectList().includes(lec.subject)) setSubjects([...subjectList(), lec.subject]);
+  if (!rawDocs.some((d) => d.id === lec.id)) { rawDocs.push(lec); mergeLectures(rawDocs); }
+  p.savedId = lec.id;
+  return lec;
+}
+let reviewChain = Promise.resolve();
+function queueReview(id) { reviewChain = reviewChain.then(() => new Promise((res) => setTimeout(res, 300))).then(() => reviewLecture(id)).catch(() => { }); }
 
 // ---------- photos of paper handouts and notes (read by Gemini via Firebase AI Logic) ----------
 const RECAPTCHA_SITE_KEY = '6LdACvYtAAAAAAyx-uVmsCe1cPjxNN6KkJ6QCLiC'; // site key registered in Firebase App Check
@@ -784,8 +826,9 @@ async function handlePhotos(files) {
     const chars = lec.pages.reduce((n, pg) => n + pg.lines.reduce((m, l) => m + l.reduce((k, s) => k + s[0].length, 0), 0), 0);
     if (chars < 10) throw new Error('empty');
     const d = new Date();
-    const subject = S.addTarget || matchSubject(norm(data.subject || '').trim() || '未分類');
-    S.pending.push({ kind: 'photo', subject, num: data.num > 0 ? data.num : null, title: norm(data.title || '').trim() || (lec.pages[0] && lec.pages[0].title) || '',
+    S.autoSaved = [];
+    const ps = pickSubject(norm(data.subject || '').trim(), pageText(lec.pages));
+    await settle({ kind: 'photo', subject: ps.subject, sure: ps.sure, num: data.num > 0 ? data.num : null, title: norm(data.title || '').trim() || (lec.pages[0] && lec.pages[0].title) || '',
       fileName: `写真 ${d.getMonth() + 1}/${d.getDate()}（${blobs.length}枚）`, pages: lec.pages, items: lec.items, numPages: blobs.length, photos: blobs, key: Math.random().toString(36).slice(2) });
   } catch (e) {
     S.parseErr = e && e.message === 'empty' ? '写真から文字を読み取れませんでした。明るい場所で、プリント全体がまっすぐ写るように撮り直してみてください。' : geminiErrMsg(e);
@@ -1038,7 +1081,7 @@ function viewHelp() {
     <ul><li>iPhone（Safari）：下の共有ボタン →「ホーム画面に追加」</li><li>Android（Chrome）：右上の「︙」→「ホーム画面に追加」</li></ul>`)}
   ${sec('レジュメを入れる', `<p>授業のPDFも、紙で配られたプリントや手書きのメモも、「本棚」タブから入れられます。入れたものは、教科ごとのフォルダに第1回、第2回…と順番に並びます。</p>
     <h4>教科を作る</h4><ol><li>「新しい教科名」の欄に教科名（例：経営組織論）を入れます。</li><li>「＋ 教科を作る」を押します。</li></ol>
-    <h4>PDFを入れる</h4><ol><li>教科の横の「PDFを追加」を押して、PDFを選びます（パソコンならドラッグでもOK）。</li><li>教科・第何回・タイトルが自動で入るので、確かめます。</li><li>「本棚に保存」を押します。</li></ol>
+    <h4>PDFを入れる</h4><ol><li>「PDFを追加」を押して、PDFを選びます。何個でもまとめて選べます。パソコンなら、本棚の画面にまとめてドラッグするだけでもOKです。</li><li>ファイルの名前と中身から、教科と第何回かを自動で判断して、そのまま本棚に入ります。</li><li>教科や回が分からなかったものと、もう入っている回だけ、確認の画面が出ます。直して「本棚に保存」（いくつもあるときは「まとめて本棚に保存」）を押します。</li></ol><p>確認してから保存したいときは、「教科と回が分かったら、確認せずにそのまま保存する」のチェックを外してください。</p>
     <h4>紙のプリント・メモを写真で入れる</h4><ol><li>教科の横の「写真を追加」を押して、写真を選びます。1回分は${MAX_PHOTOS}枚までまとめて選べます。</li><li>Geminiが文字を読み取ります（30秒ほどかかることがあります）。</li><li>「読み取った内容を見る」で、赤ペンのところが赤くなっているか確かめて、「本棚に保存」を押します。</li></ol>
     <p>うまく読める写真のコツ：</p><ul><li>明るい場所で、プリント全体がまっすぐ写るように撮る</li><li>1枚の写真に1ページずつ</li><li>名前や学籍番号が写らないようにする</li></ul>
     <p>問題になるのは次のところです。</p>
@@ -1080,8 +1123,10 @@ function introPanel() {
 function viewLib() {
   let h = introPanel();
   if (S.storage === 'local' && S.ready) h += `<p class="notice">ログインしていないので、レジュメと成績はこのブラウザの中だけに保存されます。右上の「ログイン」から、スマホとパソコンで同じ本棚を使えます。</p>`;
-  h += `<div class="drop" id="drop"><div class="row" style="justify-content:center"><label class="btn primary" for="file" data-act="add-any">PDFを追加</label><input id="file" type="file" accept="application/pdf,.pdf" multiple hidden><label class="btn" for="photo" data-act="add-any">写真を追加（紙・メモ）</label><input id="photo" type="file" accept="image/*" multiple hidden></div><div style="margin-top:6px;font-size:13px">ここにドラッグしてもOK。保存するときに教科を選べます。赤字は自動で穴埋め問題になります。</div><div class="hint" style="margin-top:4px">紙のプリントや手書きのメモは写真で入れられます（1回分は${MAX_PHOTOS}枚までまとめて選べます）。赤ペン・マーカー・（　）に書いた答えが問題になります。写真はGoogleのGeminiで読み取るので、名前や学籍番号は写さないでください。</div></div>`;
-  if (S.parsing) h += `<p class="notice">${S.parsing === 'photo' ? 'Geminiが写真を読んでいます…（30秒ほどかかることがあります）' : 'PDFを読み取っています…'}</p>`;
+  h += `<div class="drop" id="drop"><div class="row" style="justify-content:center"><label class="btn primary" for="file" data-act="add-any">PDFを追加</label><input id="file" type="file" accept="application/pdf,.pdf" multiple hidden><label class="btn" for="photo" data-act="add-any">写真を追加（紙・メモ）</label><input id="photo" type="file" accept="image/*" multiple hidden></div><div style="margin-top:6px;font-size:13px">PDFや写真を、何個でもまとめてこの画面にドラッグしてOK。ファイルの名前と中身から、教科と第何回かを自動で判断して本棚に入れます。</div><label class="chk autosave"><input type="checkbox" id="autosave" ${S.autoSave ? 'checked' : ''}><span>教科と回が分かったら、確認せずにそのまま保存する</span></label><div class="hint" style="margin-top:4px">紙のプリントや手書きのメモは写真で入れられます（1回分は${MAX_PHOTOS}枚までまとめて選べます）。赤ペン・マーカー・（　）に書いた答えが問題になります。写真はGoogleのGeminiで読み取るので、名前や学籍番号は写さないでください。</div></div>`;
+  if (S.parsing) h += `<p class="notice">${S.parsing === 'photo' ? 'Geminiが写真を読んでいます…（30秒ほどかかることがあります）' : `PDFを読み取っています…${S.parseTotal > 1 ? `（${S.parseDone}/${S.parseTotal}）` : ''}`}</p>`;
+  if (S.autoSaved.length) h += `<div class="notice saved row"><span>本棚に入れました：${S.autoSaved.map((x) => `<button class="linkbtn" data-act="open" data-id="${x.id}">${esc(x.label)}</button>`).join('、')}</span><button class="btn small ghost" data-act="saved-close">閉じる</button></div>`;
+  if (S.pending.length > 1) h += `<div class="row"><button class="btn primary" data-act="save-all">${S.pending.length}件をまとめて本棚に保存</button><span class="hint">教科と回を確かめてから押してください。</span></div>`;
   if (S.parseErr) h += `<p class="err">${esc(S.parseErr)}</p>`;
   for (const p of S.pending) h += pendingPanel(p);
   if (!S.ready) return h + `<p class="notice">本棚を読み込んでいます…</p>`;
@@ -1116,7 +1161,8 @@ function viewLib() {
 function pendingPanel(p) {
   const nq = p.items.filter((it) => !isAdmin(p, it)).length;
   const subs = subjects(); if (!subs.includes(p.subject)) subs.push(p.subject);
-  return `<section class="panel" data-key="${p.key}"><h3>${esc(p.fileName)}</h3>
+  const why = p.dup ? 'この回は、もう本棚に入っているようです。同じものなら「やめる」、別のものなら教科と回を直して保存してください。' : !p.sure ? 'どの教科か分からなかったので、教科を選んでください。' : p.num == null ? '第何回か分からなかったので、入れてください。' : '';
+  return `<section class="panel" data-key="${p.key}"><h3>${esc(p.fileName)}</h3>${why ? `<p class="err" style="margin:0">${why}</p>` : ''}
     <div style="font-size:13px;color:var(--muted)">${p.kind === 'photo' ? `写真${p.numPages}枚を読み取り、赤ペン・マーカー・空欄から <b style="color:var(--red)">${nq}問</b> 作りました。手書きの文字は読みまちがいがあるかもしれないので、保存したあと「テキスト・赤シート」で確かめてください。` : `${p.numPages}ページを読み取り、赤字から <b style="color:var(--red)">${nq}問</b> 作りました。`}教科と回を確認して保存してください。</div>
     <div class="fields">
       <label class="f">教科<select id="sub-${p.key}">${subs.map((s) => `<option ${s === p.subject ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label>
@@ -1801,6 +1847,7 @@ document.addEventListener('click', async (e) => {
   if (act === 'q-clear') { S.q = ''; render(); const i = $('#q'); if (i) i.focus(); return; }
   if (act === 'find-clear') { S.quizText = ''; S.matchInfo = null; S.findMsg = ''; render(); return; }
   if (act === 'to-top') { window.scrollTo(0, 0); return; }
+  if (act === 'saved-close') { S.autoSaved = []; render(); return; }
   if (act === 'sheet-toggle') { setSheet(!S.sheetOn); return; }
   if (act === 'match-go') { if (!S.openLec) S.backY = window.scrollY; const i = Number(b.dataset.i); const c = S.matchInfo.cands[i]; S.curMatchI = i; S.curMatchP = c.p; if (S.openLec !== c.lecId) { pdfHostEl = null; S.lecMode = S.noPdf[c.lecId] ? 'text' : 'pdf'; } S.openLec = c.lecId; S.openPage = c.p; render(); return; }
   if (act === 'polish') { polishLecture(b.dataset.id); return; }
@@ -1848,21 +1895,18 @@ document.addEventListener('click', async (e) => {
     S.openLec = null; S.confirmDel = null; render();
   }
   else if (act === 'drop-pending') { S.pending = S.pending.filter((p) => p.key !== b.dataset.key); render(); }
-  else if (act === 'save-pending') {
-    const p = S.pending.find((x) => x.key === b.dataset.key); if (!p) return;
-    const k = p.key;
-    const lec = { id: 'lec-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), subject: ($('#sub-' + k).value.trim() || '未分類'), num: $('#num-' + k).value === '' ? null : parseInt($('#num-' + k).value, 10), title: $('#ttl-' + k).value.trim(), fileName: p.fileName, addedAt: new Date().toISOString(), pages: p.pages, items: p.items, kind: p.kind || 'pdf' };
+  else if (act === 'save-pending' || act === 'save-all') {
+    const list = act === 'save-all' ? S.pending.slice() : S.pending.filter((x) => x.key === b.dataset.key);
+    if (!list.length) return;
     b.disabled = true;
-    try {
-      await saveLecture(lec);
-      try { await IDB.put(lec.id, p.photos ? { photos: p.photos } : p.file); } catch { }
-      if (S.canExplain) setTimeout(() => polishLecture(lec.id), 300);
-      else setTimeout(() => reviewLecture(lec.id), 300);
-      if (!subjectList().includes(lec.subject)) setSubjects([...subjectList(), lec.subject]);
-      S.pending = S.pending.filter((x) => x.key !== k);
-      if (!rawDocs.some((d) => d.id === lec.id)) { rawDocs.push(lec); mergeLectures(rawDocs); }
-      S.parseErr = '';
-    } catch (err) { S.parseErr = (err && err.code === 'quota_exceeded') ? '保存できる量の上限に達しました。使わない回を消してから保存してください。' : ('保存できませんでした。' + (err && err.message ? err.message : '')); }
+    for (const p of list) {
+      const k = p.key, sub = $('#sub-' + k), num = $('#num-' + k), ttl = $('#ttl-' + k);
+      if (sub) p.subject = sub.value.trim() || '未分類';
+      if (num) p.num = num.value === '' ? null : parseInt(num.value, 10);
+      if (ttl) p.title = ttl.value.trim();
+      try { await savePending(p); S.pending = S.pending.filter((x) => x.key !== k); S.parseErr = ''; }
+      catch (err) { S.parseErr = saveErrMsg(err); break; }
+    }
     render();
   }
 });
@@ -1962,6 +2006,7 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'file') { handleFiles(t.files); t.value = ''; }
   if (t.id === 'photo') { const fs = [...(t.files || [])]; t.value = ''; if (fs.length) handlePhotos(fs); }
   else if (t.id === 'sheet') setSheet(t.checked);
+  else if (t.id === 'autosave') { S.autoSave = t.checked; LS.set('rs-autosave', t.checked); }
   else if (t.id === 'cfg-sub') { S.quizCfg.subject = t.value; S.quizCfg.lec = 'all'; render(); }
   else if (t.id === 'cfg-lec') { S.quizCfg.lec = t.value; render(); }
   else if (t.id === 'ans-choice' || t.id === 'ans-type') {
@@ -1981,9 +2026,19 @@ document.addEventListener('paste', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('mask')) e.target.classList.toggle('open');
 });
-['dragover', 'dragenter'].forEach((ev) => document.addEventListener(ev, (e) => { const d = e.target.closest && e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.add('over'); } }));
-document.addEventListener('dragleave', (e) => { const d = e.target.closest && e.target.closest('#drop'); if (d) d.classList.remove('over'); });
-document.addEventListener('drop', (e) => { const d = e.target.closest && e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.remove('over'); const fs = [...e.dataTransfer.files]; if (fs.some((f) => /^image\//.test(f.type))) handlePhotos(fs.filter((f) => /^image\//.test(f.type))); else handleFiles(fs); } });
+const dropOk = () => S.view === 'lib' && !S.openLec && (S.authState !== 'out' || S.guest) && S.authState !== 'checking';
+const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+['dragover', 'dragenter'].forEach((ev) => document.addEventListener(ev, (e) => { if (!hasFiles(e) || !dropOk()) return; e.preventDefault(); const d = $('#drop'); if (d) d.classList.add('over'); }));
+document.addEventListener('dragleave', (e) => { if (e.relatedTarget) return; const d = $('#drop'); if (d) d.classList.remove('over'); });
+document.addEventListener('drop', async (e) => {
+  if (!hasFiles(e) || !dropOk()) return;
+  e.preventDefault(); const d = $('#drop'); if (d) d.classList.remove('over');
+  const fs = [...e.dataTransfer.files];
+  const imgs = fs.filter((f) => /^image\//.test(f.type)), pdfs = fs.filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+  if (!imgs.length && !pdfs.length) { S.parseErr = 'PDFか写真（画像）を入れてください。'; render(); return; }
+  if (pdfs.length) await handleFiles(pdfs);
+  if (imgs.length) await handlePhotos(imgs);
+});
 init();
 </script>
 
