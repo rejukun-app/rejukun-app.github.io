@@ -99,6 +99,16 @@ h2.sec { font-size: 13px; letter-spacing: .12em; color: var(--muted); font-weigh
 .empty { text-align: center; color: var(--muted); padding: 28px 16px; background: var(--sheet); border: 1px dashed var(--rule); border-radius: 12px; }
 .drop { border: 2px dashed var(--rule); border-radius: 12px; padding: 18px; text-align: center; color: var(--muted); background: var(--sheet); }
 .drop.over { border-color: var(--red); color: var(--red); }
+.guide { gap: 8px; }
+.guide h3 { font-size: 17px; }
+.guide h4 { margin: 8px 0 0; font-size: 14px; }
+.guide p, .guide li { font-size: 14px; line-height: 1.75; margin: 0; }
+.guide ol, .guide ul { margin: 0; padding-left: 1.4em; display: grid; gap: 2px; }
+.glead { font-size: 14px; line-height: 1.75; margin: 0; }
+.gtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.gtable th, .gtable td { border: 1px solid var(--rule); padding: 6px 8px; text-align: left; vertical-align: top; line-height: 1.6; }
+.gtable th { background: var(--paper); font-weight: 700; }
+.foot p { margin: 6px 0 0; }
 .peek { font-size: 13px; }
 .peek summary { cursor: pointer; color: var(--navy); }
 .peek-pg { border-top: 1px solid var(--rule); padding-top: 6px; margin-top: 6px; }
@@ -233,7 +243,7 @@ mark { background: #ffe58a; color: inherit; padding: 0 1px; border-radius: 2px; 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <input id="refile" type="file" accept="application/pdf,.pdf" hidden>
-<footer class="wrap foot">入れたレジュメと成績は、ログインした本人にしか見えません。PDFの原本は、入れた端末の中に保存されます。問題はレジュメの赤字や式から自動で作っているので、まちがいがあればレジュメで確かめてください。</footer>
+<footer class="wrap foot"><button class="btn small ghost" data-act="help">レジュ君 使い方ガイド</button><p>入れたレジュメは、ほかの利用者には見えません（管理者は管理画面から見ることができます）。原本（PDF・写真）は、入れた端末の中に保存されます。問題は自動で作っているので、まちがいがあればレジュメで確かめてください。</p></footer>
 
 <script>
 // Shared extractor logic (same code goes into the page)
@@ -508,7 +518,7 @@ function loginView() {
     </ol>
     <div class="login-box"><button class="btn primary big" data-act="login">Googleでログイン</button>
       <p class="hint">ログインすると、スマホとパソコンで同じ本棚が使えます。入れたレジュメと成績は、あなたにしか見えません。</p>${err}
-      <button class="btn ghost small" data-act="guest">ログインせずに使う（このブラウザだけに保存）</button></div>
+      <button class="btn ghost small" data-act="guest">ログインせずに使う（このブラウザだけに保存）</button><button class="btn ghost small" data-act="help">使い方ガイドを読む</button></div>
   </section>`;
 }
 function renderAcct() {
@@ -901,7 +911,8 @@ function render() {
   const app = $('#app');
   renderAcct();
   if (S.authState === 'checking') { app.innerHTML = '<p class="notice">読み込んでいます…</p>'; return; }
-  if (S.authState === 'out' && !S.guest) { app.innerHTML = loginView(); return; }
+  if (S.authState === 'out' && !S.guest && S.view !== 'help') { app.innerHTML = loginView(); return; }
+  if (S.view === 'help') { app.innerHTML = viewHelp(); return; }
   if (S.openLec) app.innerHTML = viewLecture();
   else if (S.view === 'lib') app.innerHTML = viewLib();
   else if (S.view === 'quiz') app.innerHTML = viewQuiz();
@@ -912,13 +923,53 @@ function render() {
   const ai = $('#ans'); if (ai && S.quiz && !S.quiz.result) ai.focus({ preventScroll: true });
 }
 
+// ---------- user guide ----------
+function viewHelp() {
+  const sec = (t, body) => `<section class="panel guide"><h3>${t}</h3>${body}</section>`;
+  const tbl = (head, rows) => `<table class="gtable"><thead><tr>${head.map((x) => `<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((x) => `<td>${x}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  return `<div class="viewer-head"><button class="btn small ghost" data-act="help-back">← もどる</button><h2>レジュ君 使い方ガイド</h2></div>
+  <p class="glead">レジュ君は、授業のレジュメを教科ごとにまとめて、赤字や赤ペンのところから問題を作ってくれる勉強アプリです。https://rejukun-app.github.io/ をスマホかパソコンで開けば、すぐ使えます。</p>
+  ${sec('はじめかた', `<p>まずはサイトを開いて、Googleでログインします。ログインすると、スマホとパソコンで同じ本棚が使えます。</p>
+    <ol><li>https://rejukun-app.github.io/ を開きます（QRコードからでもOK）。</li><li>「Googleでログイン」を押して、自分のGoogleアカウントを選びます。</li><li>ログインしたくないときは「ログインせずに使う」を押します。この場合、データはそのブラウザの中だけに保存されます。</li></ol>
+    <p>スマホのホーム画面に置いておくと、アプリのようにすぐ開けます。</p>
+    <ul><li>iPhone（Safari）：下の共有ボタン →「ホーム画面に追加」</li><li>Android（Chrome）：右上の「︙」→「ホーム画面に追加」</li></ul>`)}
+  ${sec('レジュメを入れる', `<p>授業のPDFも、紙で配られたプリントや手書きのメモも、「本棚」タブから入れられます。入れたものは、教科ごとのフォルダに第1回、第2回…と順番に並びます。</p>
+    <h4>教科を作る</h4><ol><li>「新しい教科名」の欄に教科名（例：経営組織論）を入れます。</li><li>「＋ 教科を作る」を押します。</li></ol>
+    <h4>PDFを入れる</h4><ol><li>教科の横の「PDFを追加」を押して、PDFを選びます（パソコンならドラッグでもOK）。</li><li>教科・第何回・タイトルが自動で入るので、確かめます。</li><li>「本棚に保存」を押します。</li></ol>
+    <h4>紙のプリント・メモを写真で入れる</h4><ol><li>教科の横の「写真を追加」を押して、写真を選びます。1回分は${MAX_PHOTOS}枚までまとめて選べます。</li><li>Geminiが文字を読み取ります（30秒ほどかかることがあります）。</li><li>「読み取った内容を見る」で、赤ペンのところが赤くなっているか確かめて、「本棚に保存」を押します。</li></ol>
+    <p>うまく読める写真のコツ：</p><ul><li>明るい場所で、プリント全体がまっすぐ写るように撮る</li><li>1枚の写真に1ページずつ</li><li>名前や学籍番号が写らないようにする</li></ul>
+    <p>問題になるのは次のところです。</p>
+    ${tbl(['入れたもの', '問題になるところ'], [['PDF', '赤字'], ['写真（紙・メモ）', '赤ペン・色ペン、蛍光マーカー、丸で囲んだ語句、（　）に書いた答え']])}
+    <p>出席・成績・提出期限などの連絡用の赤字は、問題にしません。</p>`)}
+  ${sec('レジュメを見る', `<p>本棚で「レジュメ」を押すと、その回の中身を見られます。上のボタンで、見方を2つから選べます。</p>
+    <ul><li><b>原本（PDF・写真）</b>：入れたものをそのまま表示します。</li><li><b>テキスト・赤シート</b>：文字だけを表示します。「赤シートをかける」にチェックを入れると赤字が隠れて、タップするとめくれます。</li></ul>
+    <p>原本は、入れた端末の中だけに保存されます。別の端末では文字だけが表示されますが、PDFなら「PDFを選んで原本を表示」でもう一度入れられます。</p>
+    <p>第何回やタイトルが間違っていたら「回・タイトルを直す」、いらない回は「本棚から消す」で消せます。</p>`)}
+  ${sec('問題を解く', `<p>「問題」タブで教科を選ぶと、入れたレジュメから作った問題が出ます。本棚の「解く」を押せば、その回だけを解けます。</p>
+    <ol><li>教科と、どの回から出すかを選びます。</li><li>「答え方」をレ点で選びます。4択にするか、全部書いて答えるかを切り替えられます。</li><li>答えを入れて「答え合わせ」。分からないときは「わからない（答えを見る）」を押します。</li><li>「レジュメで見る」を押すと、その問題が載っているページが開きます。</li></ol>
+    <p>問題の形は、中身に合わせて自動で変わります。</p>
+    ${tbl(['問題の種類', '出方'], [['用語', '「（　）に入る用語を答えよ」'], ['計算・式', '4択']])}
+    <p>エクセル演習のように、操作の手順が中心で問題に向かない教科は、自動で「問題なし」になります（エクセルの式も問題にはなりません）。問題タブに、その理由が表示されます。</p>
+    <p>いらない問題は、レジュメの画面の「問題の一覧・整理」から「消す」で出題されなくなります。「戻す」でいつでも元に戻せます。</p>`)}
+  ${sec('用語を検索する', `<p>「検索」タブでは、本棚にある全部のレジュメから探せます。</p>
+    <ul><li><b>キーワード検索</b>：単語を入れると、どの教科の第何回・何ページに出てくるかが一覧で出ます。押すとそのページが開きます。</li><li><b>小テストの参考資料を探す</b>：小テストの問題文をコピーして貼り付け、「この問題文で探す」を押すと、関係しそうなページを自動で開きます。候補がいくつかあるときは、他のページにも切り替えられます。</li></ul>`)}
+  ${sec('困ったとき・注意すること', tbl(['こんなとき', 'こうする'], [
+      ['「文字を読み取れませんでした」と出たPDF', 'スキャンした画像のPDFです。各ページを写真（スクショ）にして「写真を追加」から入れてください。'],
+      ['写真を入れたら「上限に達しました」', '1日に使える回数の上限です。時間をおいてからもう一度試してください。'],
+      ['手書きの文字が間違っている', '「テキスト・赤シート」で確かめて、おかしい問題は「問題の一覧・整理」で消してください。'],
+      ['別の端末で原本が出ない', '原本は入れた端末にだけ保存されます。文字と問題はどの端末でも使えます。'],
+      ['新しくなったはずが、前のまま', 'パソコンなら Ctrl + F5、スマホならページを開き直します。']]) + `
+    <h4>注意すること</h4><ul><li>写真はGoogleのGeminiで読み取ります。無料の仕組みなので、送った写真がGoogleのサービス改善に使われることがあります。名前や学籍番号は写さないでください。</li><li>ログインして保存したレジュメは、他の利用者には見えません。ただし、レジュ君の管理者は管理画面からデータを見られます（見ません！）。</li><li>問題は自動で作っているので、まちがいがあることもあります。気になったら「レジュメで見る」で元のページを確かめてください。</li><li>不具合や「こんな機能がほしい」があれば、大雅まで教えてください。</li></ul>`)}
+  <div><button class="btn small ghost" data-act="help-back">← もどる</button></div>`;
+}
+
 function introPanel() {
   if (S.introHidden) return '';
   return `<section class="intro" aria-labelledby="intro-h">
-    <div class="intro-head"><h2 id="intro-h">レジュ君の使い方</h2><button class="btn small ghost" data-act="intro-hide">閉じる</button></div>
+    <div class="intro-head"><h2 id="intro-h">レジュ君の使い方</h2><button class="btn small" data-act="help">くわしいガイド</button><button class="btn small ghost" data-act="intro-hide">閉じる</button></div>
     <ol class="steps">
       <li><span class="no">①</span><div><b>レジュメをまとめることができる</b><p>授業のPDFや、紙のプリント・メモの写真を入れると、教科ごとのフォルダに第1回、第2回…と並びます。</p><button class="btn small" data-act="intro-add">PDFを追加する</button></div></li>
-      <li><span class="no">②</span><div><b>まとめたものを問題形式にしてくれる</b><p>赤字は穴埋め問題に、エクセルの式や計算は4択問題になります。</p><button class="btn small" data-act="intro-quiz">問題を解く</button></div></li>
+      <li><span class="no">②</span><div><b>まとめたものを問題形式にしてくれる</b><p>赤字や赤ペンのところは穴埋め問題に、計算や式は4択問題になります。</p><button class="btn small" data-act="intro-quiz">問題を解く</button></div></li>
       <li><span class="no">③</span><div><b>用語検索することができる</b><p>キーワードを入れると、どの回の何ページに出てきたかすぐ分かります。小テストの問題から、関係するページを開くこともできます。</p><button class="btn small" data-act="intro-search">用語を検索する</button></div></li>
     </ol>
   </section>`;
@@ -1514,6 +1565,8 @@ document.addEventListener('click', async (e) => {
   if (act === 'rename') { S.renaming = b.dataset.sub; render(); const i = $('#rename'); if (i) { i.focus(); i.select(); } return; }
   if (act === 'rename-cancel') { S.renaming = null; render(); return; }
   if (act === 'del-sub') { setSubjects(subjectList().filter((x) => x !== b.dataset.sub)); render(); return; }
+  if (act === 'help') { S.helpFrom = S.view === 'help' ? S.helpFrom : S.view; S.view = 'help'; render(); window.scrollTo(0, 0); return; }
+  if (act === 'help-back') { S.view = S.helpFrom || 'lib'; render(); window.scrollTo(0, 0); return; }
   if (act === 'intro-hide' || act === 'intro-show') { S.introHidden = act === 'intro-hide'; LS.set('rs-intro-hidden', S.introHidden); render(); return; }
   if (act === 'intro-add') { S.addTarget = null; $('#file').click(); return; }
   if (act === 'intro-quiz') { S.view = 'quiz'; S.openLec = null; render(); window.scrollTo(0, 0); return; }
