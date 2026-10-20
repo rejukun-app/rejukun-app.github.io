@@ -161,6 +161,9 @@ label.f input, label.f select { border: 1px solid var(--rule); background: var(-
 .slide p { margin: 4px 0; overflow-wrap: anywhere; }
 .slide.hit { box-shadow: 0 0 0 2px var(--red); }
 .mask { color: var(--red); font-weight: 700; }
+.sheet-fab { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 20; border: 0; border-radius: 999px; padding: 12px 18px; font: inherit; font-size: 14px; font-weight: 700; color: #fff; background: var(--navy); box-shadow: 0 4px 14px rgba(0,0,0,.25); cursor: pointer; }
+.sheet-fab.on { background: var(--red); }
+#sheetlist { padding-bottom: 56px; }
 .sheet-on .mask { background: var(--redsheet); color: transparent; border-radius: 3px; cursor: pointer; padding: 0 2px; }
 .sheet-on .mask.open { background: var(--redtint); color: var(--red); }
 .viewer-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -602,6 +605,7 @@ function toLocal() {
 const refused = (e) => e && (e.code === 'permission-denied' || e.code === 'invalid_argument' || e.code === 'not_granted');
 async function init() {
   S.collapsed = LS.get('rs-collapsed', {});
+  S.sheetOn = LS.get('rs-sheet', true) !== false;
   S.introHidden = !!LS.get('rs-intro-hidden', false);
   S.exp = LS.get('rs-explain', {});
   { const qp = LS.get('rs-quiz-prefs', null); if (qp) { if (qp.answer) S.quizCfg.answer = qp.answer; if (qp.mode) S.quizCfg.mode = qp.mode; } }
@@ -1201,7 +1205,8 @@ function viewLecture() {
   if (S.noPdf[l.id] && l.kind === 'photo') h += `<p class="notice">写真の原本は、写真を入れた端末にだけ保存されています。この端末では文字だけ表示しています。</p>`;
   else if (S.noPdf[l.id]) h += `<p class="notice row">この端末にはPDFの原本がないので、文字だけ表示しています。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
   h += `<label class="toggle"><input type="checkbox" id="sheet" ${S.sheetOn ? 'checked' : ''}> 赤シートをかける（赤字をタップでめくる）</label>
-    <div class="list ${S.sheetOn ? 'sheet-on' : ''}">`;
+    <div class="list ${S.sheetOn ? 'sheet-on' : ''}" id="sheetlist">`;
+  h += `<button class="sheet-fab ${S.sheetOn ? 'on' : ''}" id="sheetfab" data-act="sheet-toggle" aria-pressed="${S.sheetOn}">${S.sheetOn ? '赤シートをはずす' : '赤シートをかける'}</button>`;
   for (const pg of l.pages) {
     if (!pg.title && !pg.lines.length) continue;
     const head = pg.lines[0] ? lineHtml(pg.lines[0].filter((s) => s[0].trim() !== '再掲')) : esc(pg.title);
@@ -1212,6 +1217,13 @@ function viewLecture() {
   return h + `</div>` + backBottom;
 }
 
+// red sheet on/off without re-rendering, so the reader stays at the same place
+function setSheet(on) {
+  S.sheetOn = on; LS.set('rs-sheet', on);
+  const list = $('#sheetlist'); if (list) { list.classList.toggle('sheet-on', on); if (!on) list.querySelectorAll('.mask.open').forEach((m) => m.classList.remove('open')); }
+  const cb = $('#sheet'); if (cb) cb.checked = on;
+  const fab = $('#sheetfab'); if (fab) { fab.classList.toggle('on', on); fab.setAttribute('aria-pressed', String(on)); fab.textContent = on ? '赤シートをはずす' : '赤シートをかける'; }
+}
 function polishRow(l) {
   if (!S.canExplain || l.builtin) return '';
   const st = S.polishing[l.id];
@@ -1789,6 +1801,7 @@ document.addEventListener('click', async (e) => {
   if (act === 'q-clear') { S.q = ''; render(); const i = $('#q'); if (i) i.focus(); return; }
   if (act === 'find-clear') { S.quizText = ''; S.matchInfo = null; S.findMsg = ''; render(); return; }
   if (act === 'to-top') { window.scrollTo(0, 0); return; }
+  if (act === 'sheet-toggle') { setSheet(!S.sheetOn); return; }
   if (act === 'match-go') { if (!S.openLec) S.backY = window.scrollY; const i = Number(b.dataset.i); const c = S.matchInfo.cands[i]; S.curMatchI = i; S.curMatchP = c.p; if (S.openLec !== c.lecId) { pdfHostEl = null; S.lecMode = S.noPdf[c.lecId] ? 'text' : 'pdf'; } S.openLec = c.lecId; S.openPage = c.p; render(); return; }
   if (act === 'polish') { polishLecture(b.dataset.id); return; }
   if (act === 'ai-gen') { makeAiQuestions(b.dataset.id); return; }
@@ -1948,7 +1961,7 @@ document.addEventListener('change', async (e) => {
   }
   if (t.id === 'file') { handleFiles(t.files); t.value = ''; }
   if (t.id === 'photo') { const fs = [...(t.files || [])]; t.value = ''; if (fs.length) handlePhotos(fs); }
-  else if (t.id === 'sheet') { S.sheetOn = t.checked; render(); }
+  else if (t.id === 'sheet') setSheet(t.checked);
   else if (t.id === 'cfg-sub') { S.quizCfg.subject = t.value; S.quizCfg.lec = 'all'; render(); }
   else if (t.id === 'cfg-lec') { S.quizCfg.lec = t.value; render(); }
   else if (t.id === 'ans-choice' || t.id === 'ans-type') {
