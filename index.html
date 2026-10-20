@@ -176,6 +176,7 @@ label.f input, label.f select { border: 1px solid var(--rule); background: var(-
 .kind.m { color: var(--navy); } .kind.t { color: var(--red); }
 .stem { font-size: 13px; font-weight: 700; color: var(--muted); }
 .card .q { font-size: 18px; line-height: 1.9; overflow-wrap: anywhere; }
+.card .q.aiq { font-size: 16px; line-height: 1.8; white-space: pre-wrap; }
 .card .q .ctx { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
 .blank { display: inline-block; min-width: 4.5em; border-bottom: 3px solid var(--red); background: var(--redtint); color: var(--red); text-align: center; padding: 0 6px; font-weight: 700; border-radius: 3px 3px 0 0; }
 .answer-row { display: flex; gap: 8px; }
@@ -470,7 +471,7 @@ const S = {
   quiz: null, quizCfg: { subject: '', lec: 'all', mode: 'all', answer: 'auto' },
   q: '',
   confirmDel: null,
-  quizMsg: '', polishing: {}, addTarget: null, renaming: null, manage: null, editMeta: null, canImage: false, matchInfo: null, quizText: '', finding: '', findMsg: '', canExplain: false, lookup: {}, introHidden: false, lecMode: 'pdf', noPdf: {}, reattachId: null, newSub: '', collapsed: {}, libMsg: '', exp: {},
+  quizMsg: '', polishing: {}, aiGen: {}, addTarget: null, renaming: null, manage: null, editMeta: null, canImage: false, matchInfo: null, quizText: '', finding: '', findMsg: '', canExplain: false, lookup: {}, introHidden: false, lecMode: 'pdf', noPdf: {}, reattachId: null, newSub: '', collapsed: {}, libMsg: '', exp: {},
 };
 let db = null, uid = null;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -541,6 +542,7 @@ async function doLogin() {
 }
 async function saveLecture(lec) {
   const body = { subject: lec.subject, num: lec.num, title: lec.title, fileName: lec.fileName || '', addedAt: lec.addedAt, pages: lec.pages, items: lec.items, kind: lec.kind || 'pdf' };
+  if (lec.ai) body.ai = lec.ai;
   if (S.storage === 'db') {
     try { await userCol().doc(lec.id).set(body); return; } catch (e) { if (!refused(e)) throw e; toLocal(); }
   }
@@ -719,7 +721,7 @@ const PHOTO_PROMPT = `あなたは大学の授業で配られた紙のプリン�
 - 読めない文字は推測せず「□」にします。勝手に文章を足したり、要約したりしないでください。
 subject には教科名、num には「第◯回」の数字、title には授業のテーマを入れます。写真から分からなければ空文字（num は 0）にします。`;
 async function geminiRead(blobs) {
-  const { ai, aiM } = await loadGemini();
+  const { aiM } = await loadGemini();
   const { Schema } = aiM;
   const seg = Schema.object({ properties: { t: Schema.string(), m: Schema.integer() } });
   const schema = Schema.object({
@@ -730,6 +732,10 @@ async function geminiRead(blobs) {
   });
   const parts = [{ text: PHOTO_PROMPT }];
   for (const b of blobs) parts.push({ inlineData: { mimeType: 'image/jpeg', data: await blobB64(b) } });
+  return geminiJSON(parts, schema);
+}
+async function geminiJSON(parts, schema) {
+  const { ai, aiM } = await loadGemini();
   let last = null;
   for (const name of GEMINI_MODELS) {
     try {
@@ -778,6 +784,94 @@ async function handlePhotos(files) {
   }
   S.parsing = false; S.addTarget = null; render();
 }
+
+// ---------- questions written by Gemini (calculation, Excel functions, understanding) ----------
+const AI_COUNT = 10;
+function lectureText(l, max = 15000) {
+  let out = '';
+  for (const pg of l.pages) {
+    const body = pg.lines.slice(pg.title ? 1 : 0).map((ln) => ln.map((x) => x[0]).join('')).join('\n');
+    out += `[p.${pg.p}] ${pg.title || ''}\n${body}\n\n`;
+    if (out.length > max) { out = out.slice(0, max); break; }
+  }
+  return out;
+}
+function aiPrompt(l) {
+  return `あなたは大学の授業の小テストを作る先生です。次は「${l.subject}」第${l.num ?? '?'}回「${l.title || ''}」のレジュメの文字です。[p.数字] はページ番号です。
+この授業の内容が分かっているかを確かめる4択問題を${AI_COUNT}問作ってください。
+
+問題の中身：
+- エクセル・表計算の授業なら：目的に合う関数を選ぶ問題、式の意味を問う問題、小さな表のデータを問題文に書いて式の結果を求める問題、絶対参照（$）と相対参照の問題を中心にします。クリックの手順やメニューの場所そのものを問う問題は作りません。
+- 数学・統計・会計など計算する授業なら：レジュメの例題の数字を変えた計算問題と、公式の使い方を問う問題を中心にします。
+- それ以外の授業なら：大事な用語の意味、具体例、似た用語との違いを問う問題にします。
+- 計算の答えは、必ず自分で計算し直して確かめてください。正解はちょうど1つにします。
+- レジュメに書かれていない知識が必要な問題は作りません。出席・成績・課題・提出の連絡は問題にしません。
+
+書き方：
+- q：問題文。表のデータは「A1=80、A2=65、A3=90」のように文字で書きます。
+- c：選択肢を4つ。ありがちな間違い（関数の取り違え、$の付け忘れ、計算ミス）を入れ、同じものは入れません。選択肢に記号（A.やア.）は付けません。
+- a：正解の選択肢の番号（0〜3）。
+- e：解説を1〜3文で。計算なら途中の式を書きます。
+- p：その問題のもとになったページ番号（数字）。
+
+レジュメ：
+${lectureText(l)}`;
+}
+async function geminiQuestions(l) {
+  const { aiM } = await loadGemini();
+  const { Schema } = aiM;
+  const schema = Schema.object({ properties: { items: Schema.array({ items: Schema.object({ properties: {
+    q: Schema.string(), c: Schema.array({ items: Schema.string() }), a: Schema.integer(), e: Schema.string(), p: Schema.integer() } }) }) } });
+  const data = await geminiJSON([{ text: aiPrompt(l) }], schema);
+  const pages = new Set(l.pages.map((pg) => pg.p));
+  const out = [];
+  for (const it of (data && data.items) || []) {
+    const c = (it.c || []).map((x) => String(x).trim().replace(/^[A-DＡ-Ｄア-エ][.．、)）]\s*/, '')).filter(Boolean);
+    if (!it.q || c.length !== 4 || new Set(c).size !== 4 || !(it.a >= 0 && it.a <= 3)) continue;
+    if (ADMIN_RE.test(it.q)) continue;
+    out.push({ q: String(it.q).trim(), c, a: it.a, e: String(it.e || '').trim(), p: pages.has(it.p) ? it.p : (l.pages[0] ? l.pages[0].p : 1) });
+  }
+  return out;
+}
+async function saveLecPatch(id, patch) {
+  const base = rawDocs.find((d) => d.id === id); if (base) Object.assign(base, patch);
+  const local = () => { const all = LS.get('rs-lectures', {}); if (all[id]) { Object.assign(all[id], patch); LS.set('rs-lectures', all); } };
+  if (S.storage === 'db') { try { await userCol().doc(id).update(patch); } catch (e) { if (!refused(e)) throw e; toLocal(); local(); } }
+  else local();
+  mergeLectures(rawDocs);
+}
+function aiErrMsg(e) {
+  if (e && e.message === 'empty') return '問題を作れませんでした。もう一度お試しください。';
+  const m = geminiErrMsg(e);
+  if (/準備がまだ/.test(m)) return 'Geminiの準備がまだ終わっていません。管理者がFirebaseの設定を終えると使えるようになります。';
+  if (/上限/.test(m)) return '今日はGeminiを使える回数の上限に達しました。時間をおいてもう一度お試しください。';
+  if (/読み込めませんでした/.test(m)) return 'Geminiにつながりませんでした。ネット接続を確認して、もう一度お試しください。';
+  return '問題を作れませんでした。もう一度お試しください。';
+}
+async function makeAiQuestions(id) {
+  const l = S.lectures.find((x) => x.id === id); if (!l || S.aiGen[id] === 'working') return;
+  S.aiGen[id] = 'working'; render();
+  try {
+    const qs = await geminiQuestions(l);
+    if (!qs.length) throw new Error('empty');
+    // old answers belong to the old set of questions
+    for (const k of Object.keys(S.progress.stats)) if (k.startsWith(id + ':ai:')) delete S.progress.stats[k];
+    for (const k of Object.keys(S.progress.hidden)) if (k.startsWith(id + ':ai:')) delete S.progress.hidden[k];
+    queueProgress();
+    await saveLecPatch(id, { ai: qs });
+    S.aiGen[id] = 'done';
+  } catch (e) { S.aiGen[id] = aiErrMsg(e); }
+  render();
+}
+function aiRow(l) {
+  if (l.builtin) return '';
+  const st = S.aiGen[l.id], n = (l.ai || []).length;
+  if (st === 'working') return `<p class="notice">Geminiがこの回の問題を作っています…（30秒ほどかかることがあります）</p>`;
+  const msg = st && st !== 'done' ? `<p class="err">${esc(st)}</p>` : '';
+  return msg + `<div class="row"><button class="btn small" data-act="ai-gen" data-id="${l.id}">${n ? 'AIの問題を作り直す' : 'Geminiで問題を作る'}</button><span class="hint">${n ? `AIが作った問題が${n}問あります。` : '計算・関数・内容を理解する4択問題を作ります。'}</span></div>`;
+}
+const hasAi = (l) => !!(l.ai && l.ai.length);
+const aiItem = (x) => ({ p: x.p, aq: x.q, a: x.c[x.a], cp4: x.c, e: x.e, ai: 1, b: '', f: '', t: '' });
 
 // ---------- helpers ----------
 const itemKey =(lecId, i) => lecId + ':' + i;
@@ -948,8 +1042,8 @@ function viewHelp() {
   ${sec('問題を解く', `<p>「問題」タブで教科を選ぶと、入れたレジュメから作った問題が出ます。本棚の「解く」を押せば、その回だけを解けます。</p>
     <ol><li>教科と、どの回から出すかを選びます。</li><li>「答え方」をレ点で選びます。4択にするか、全部書いて答えるかを切り替えられます。</li><li>答えを入れて「答え合わせ」。分からないときは「わからない（答えを見る）」を押します。</li><li>「レジュメで見る」を押すと、その問題が載っているページが開きます。</li></ol>
     <p>問題の形は、中身に合わせて自動で変わります。</p>
-    ${tbl(['問題の種類', '出方'], [['用語', '「（　）に入る用語を答えよ」'], ['計算・式', '4択']])}
-    <p>エクセル演習のように、操作の手順が中心で問題に向かない教科は、自動で「問題なし」になります（エクセルの式も問題にはなりません）。問題タブに、その理由が表示されます。</p>
+    ${tbl(['問題の種類', '出方'], [['用語', '「（　）に入る用語を答えよ」'], ['計算・式', '4択'], ['AI問題（Gemini）', '4択・解説つき']])}
+    <p>エクセル演習のように、操作の手順が中心の教科は、赤字からの問題は出しません。そのかわりに、各回の「Geminiで問題を作る」を押すと、Geminiが関数の選び方・式の結果・計算などの4択問題を10問ほど作ります（数学や統計など、ほかの教科でも使えます）。答えたあとに解説も出ます。AIが作る問題なので、おかしい問題は「この問題を今後出さない」で消してください。</p>
     <p>いらない問題は、レジュメの画面の「問題の一覧・整理」から「消す」で出題されなくなります。「戻す」でいつでも元に戻せます。</p>`)}
   ${sec('用語を検索する', `<p>「検索」タブでは、本棚にある全部のレジュメから探せます。</p>
     <ul><li><b>キーワード検索</b>：単語を入れると、どの教科の第何回・何ページに出てくるかが一覧で出ます。押すとそのページが開きます。</li><li><b>小テストの参考資料を探す</b>：小テストの問題文をコピーして貼り付け、「この問題文で探す」を押すと、関係しそうなページを自動で開きます。候補がいくつかあるときは、他のページにも切り替えられます。</li></ul>`)}
@@ -1003,7 +1097,7 @@ function viewLib() {
       h += `<div class="lec"><div class="num">${l.num != null ? '第' + l.num + '回' : '—'}</div>
         <div style="min-width:0"><div class="ttl">${esc(l.title || l.fileName || '(タイトルなし)')} ${l.builtin ? '<span class="tag">お試し</span>' : ''}</div>
         <div class="meta"><span>${l.pages.length}ページ</span></div></div>
-        <div class="acts">${S.confirmDel === l.id ? `<span class="confirm">消しますか？<button class="btn small" data-act="del-yes" data-id="${l.id}">消す</button><button class="btn small ghost" data-act="del-no">やめる</button></span>` : `<button class="btn small" data-act="open" data-id="${l.id}">レジュメ</button>${subjectMode(l.subject) === 'none' ? '' : `<button class="btn small primary" data-act="solve" data-id="${l.id}">解く</button>`}<button class="btn small ghost" data-act="del" data-id="${l.id}" aria-label="この回を消す">消す</button>`}</div></div>`;
+        <div class="acts">${S.confirmDel === l.id ? `<span class="confirm">消しますか？<button class="btn small" data-act="del-yes" data-id="${l.id}">消す</button><button class="btn small ghost" data-act="del-no">やめる</button></span>` : `<button class="btn small" data-act="open" data-id="${l.id}">レジュメ</button>${subjectMode(l.subject) === 'none' && !hasAi(l) ? '' : `<button class="btn small primary" data-act="solve" data-id="${l.id}">解く</button>`}<button class="btn small ghost" data-act="del" data-id="${l.id}" aria-label="この回を消す">消す</button>`}</div></div>`;
     }
     h += `</section>`;
   }
@@ -1086,11 +1180,12 @@ function viewLecture() {
   let h = `<div class="viewer-head"><button class="btn small ghost" data-act="back">← 本棚</button>
     <h2>${esc(l.subject)} ${l.num != null ? '第' + l.num + '回' : ''}<br><span style="font-size:15px;font-weight:500">${esc(l.title || '')}</span></h2></div>
     <div class="row"><div class="seg" role="group" aria-label="表示"><button data-act="mode-pdf" aria-pressed="${S.lecMode === 'pdf'}">${l.kind === 'photo' ? '原本（写真）' : '原本（PDF）'}</button><button data-act="mode-text" aria-pressed="${S.lecMode === 'text'}">テキスト・赤シート</button></div>
-    ${subjectMode(l.subject) === 'none' ? '' : `<button class="btn small primary" data-act="solve" data-id="${l.id}">この回を解く</button>`}
+    ${subjectMode(l.subject) === 'none' && !hasAi(l) ? '' : `<button class="btn small primary" data-act="solve" data-id="${l.id}">この回を解く</button>`}
     ${S.confirmDel === l.id ? `<span class="confirm">本当に消しますか？<button class="btn small" data-act="del-yes" data-id="${l.id}">消す</button><button class="btn small ghost" data-act="del-no">やめる</button></span>` : `<button class="btn small ghost" data-act="del" data-id="${l.id}">本棚から消す</button>`}</div>
     ${matchBanner(l)}
     ${S.editMeta === l.id ? metaForm(l) : ''}
     ${polishRow(l)}
+    ${aiRow(l)}
     <div class="row">${l.builtin ? '' : `<button class="btn small" data-act="edit-meta" aria-expanded="${S.editMeta === l.id}">回・タイトルを直す</button>`}<button class="btn small" data-act="manage" aria-expanded="${S.manage === l.id}">${S.manage === l.id ? '問題の一覧を閉じる' : `問題の一覧・整理`}</button></div>
     ${S.manage === l.id ? manageList(l) : ''}`;
   if (S.lecMode === 'pdf') return h + `<div id="pdfhost" class="list"></div>`;
@@ -1297,10 +1392,11 @@ function quizPool() {
   else if (c.subject) lecs = lecs.filter((l) => l.subject === c.subject);
   const pool = [];
   for (const l of lecs) {
-    if (subjectMode(l.subject) === 'none') continue;
+    const none = subjectMode(l.subject) === 'none';
     const formula = subjectMode(l.subject) === 'formula';
-    let entries = l.items.map((it, i) => ({ it, k: itemKey(l.id, i) }));
+    let entries = none ? [] : l.items.map((it, i) => ({ it, k: itemKey(l.id, i) }));
     if (formula) entries = [...entries.filter(({ it }) => it.x || isMath(it)), ...genFormulaItems(l)];
+    if (hasAi(l)) entries = [...entries, ...l.ai.map((x, i) => ({ it: aiItem(x), k: l.id + ':ai:' + i }))];
     for (const { it, k } of entries) {
       if (S.progress.hidden[k] || isAdmin(l, it)) continue;
       const st = S.progress.stats[k];
@@ -1339,19 +1435,26 @@ function viewQuiz() {
     const sm = subjectMode(sub);
     h += `<section class="subject"><div class="shead"><span class="sname" style="cursor:default"><span>${esc(sub)}</span><small>${lecs.length}回分</small></span>
       <div class="smode"><span class="hint">問題の作り方</span><div class="seg" role="group" aria-label="${esc(sub)}の問題の作り方"><button data-act="smode" data-sub="${esc(sub)}" data-v="red" aria-pressed="${sm === 'red'}">赤字の言葉</button><button data-act="smode" data-sub="${esc(sub)}" data-v="formula" aria-pressed="${sm === 'formula'}">式・公式</button><button data-act="smode" data-sub="${esc(sub)}" data-v="none" aria-pressed="${sm === 'none'}">出さない</button></div></div>
-      ${lecs.length && sm !== 'none' ? `<div class="acts"><button class="btn small primary" data-act="start-sub" data-sub="${esc(sub)}">この教科をまとめて解く</button></div>` : ''}</div>`;
+      ${lecs.length && (sm !== 'none' || lecs.some(hasAi)) ? `<div class="acts"><button class="btn small primary" data-act="start-sub" data-sub="${esc(sub)}">この教科をまとめて解く</button></div>` : ''}</div>`;
     if (sm === 'none') {
       const why = (S.progress.subjectMode && S.progress.subjectMode[sub]) ? '' : ({ name: '演習・実習などの授業なので、自動で問題なしにしています。', steps: 'レジュメが作業の手順中心なので、自動で問題なしにしています。', few: '赤字の言葉が少ないので、自動で問題なしにしています。' })[autoMode(sub).why] || '';
-      h += `<div class="lec-empty">この教科は問題を出しません。${why}レジュメは本棚と検索で見られます。問題がほしいときは、上の「赤字の言葉」を選んでください。</div></section>`; continue;
+      h += `<div class="lec-empty">赤字からの問題は出しません。${why}そのかわりに、Geminiが計算・関数・内容の4択問題を作れます。各回の「Geminiで問題を作る」を押してください。</div>`;
+      for (const l of lecs) h += aiLecRow(l);
+      h += `</section>`; continue;
     }
     if (!lecs.length) h += `<div class="lec-empty">まだレジュメがありません。本棚の「PDFを追加」から入れてください。</div>`;
-    for (const l of lecs) {
-      h += `<div class="lec"><div class="num">${l.num != null ? '第' + l.num + '回' : '—'}</div><div style="min-width:0"><div class="ttl">${esc(l.title || l.fileName || '(タイトルなし)')}</div></div>
-        <div class="acts"><button class="btn small" data-act="start-lec" data-id="${l.id}">解く</button></div></div>`;
-    }
+    for (const l of lecs) h += aiLecRow(l, true);
     h += `</section>`;
   }
   return h;
+}
+function aiLecRow(l, normal) {
+  const st = S.aiGen[l.id], n = hasAi(l) ? l.ai.length : 0;
+  const gen = st === 'working' ? '<span class="hint">Geminiが問題を作っています…</span>' : `<button class="btn small ${normal ? 'ghost' : ''}" data-act="ai-gen" data-id="${l.id}">${n ? 'AI問題を作り直す' : 'Geminiで問題を作る'}</button>`;
+  const solve = normal || n ? `<button class="btn small primary" data-act="start-lec" data-id="${l.id}">解く${!normal && n ? `（${n}問）` : ''}</button>` : '';
+  const err = st && st !== 'working' && st !== 'done' ? `<div class="err">${esc(st)}</div>` : '';
+  return `<div class="lec"><div class="num">${l.num != null ? '第' + l.num + '回' : '—'}</div><div style="min-width:0"><div class="ttl">${esc(l.title || l.fileName || '(タイトルなし)')}</div>${err}</div>
+    <div class="acts">${solve}${l.builtin ? '' : gen}</div></div>`;
 }
 function choiceList(entry, r) {
   const fx = isFormula(entry.it.a);
@@ -1366,14 +1469,15 @@ function quizCard(Q) {
   const r = Q.result;
   const blank = r ? `<span class="blank">${esc(it.a)}</span>` : `<span class="blank">？</span>`;
   return `<section class="card">
-    <div class="where"><span class="kind ${it.g || isMath(it) ? 'm' : 't'}">${it.g ? '関数' : isMath(it) ? '計算・式' : '用語'}</span><b>${esc(lec.subject)} 第${lec.num ?? '?'}回</b><span>p.${it.p}</span><button class="btn small ghost" data-act="goto" data-id="${lec.id}" data-p="${it.p}">レジュメで見る</button></div>
-    <div class="stem">${entry.choices ? '（　）に入る正しいものを選べ' : (isMath(it) ? '（　）に入るものを答えよ' : '（　）に入る用語を答えよ')}</div>
-    <div class="q">${it.t ? `<span class="ctx">${esc(it.t)}</span>` : ''}${esc(qb(it))}${blank}${esc(qf(it))}</div>
+    <div class="where"><span class="kind ${it.ai || it.g || isMath(it) ? 'm' : 't'}">${it.ai ? 'AI問題' : it.g ? '関数' : isMath(it) ? '計算・式' : '用語'}</span><b>${esc(lec.subject)} 第${lec.num ?? '?'}回</b><span>p.${it.p}</span><button class="btn small ghost" data-act="goto" data-id="${lec.id}" data-p="${it.p}">レジュメで見る</button></div>
+    <div class="stem">${it.ai ? '正しいものを選べ' : entry.choices ? '（　）に入る正しいものを選べ' : (isMath(it) ? '（　）に入るものを答えよ' : '（　）に入る用語を答えよ')}</div>
+    ${it.ai ? `<div class="q aiq">${esc(it.aq)}</div>` : `<div class="q">${it.t ? `<span class="ctx">${esc(it.t)}</span>` : ''}${esc(qb(it))}${blank}${esc(qf(it))}</div>`}
     ${r && entry.choices ? choiceList(entry, r) : ''}
     ${r ? `<div class="verdict ${r.ok ? 'ok' : 'ng'}">${r.ok ? '正解！' : (r.typed ? `ざんねん。あなたの答え：${esc(r.typed)}` : '答えはこれでした')} <span style="font-weight:700">→ ${esc(it.a)}</span></div>
+      ${it.ai && it.e ? `<div class="explain"><span class="lbl">解説 · Gemini</span><div class="body">${esc(it.e)}</div></div>` : ''}
       ${explainBox(Q.list[Q.i].k)}
       ${S.lookup[Q.list[Q.i].k] || S.exp[Q.list[Q.i].k] ? lookupBox(entry) : ''}
-      <div class="row"><button class="btn primary" data-act="next" id="nextbtn">次へ</button>${!S.canExplain && !S.lookup[Q.list[Q.i].k] ? '<button class="btn" data-act="lookup">意味を調べる</button>' : ''}${!S.canExplain || (S.exp[Q.list[Q.i].k] && S.exp[Q.list[Q.i].k].state !== 'error') ? '' : `<button class="btn" data-act="explain">${S.exp[Q.list[Q.i].k] ? 'もう一度解説' : '用語の解説'}</button>`}${!r.ok && r.typed && !entry.choices ? '<button class="btn" data-act="mark-ok">実は合ってた</button>' : ''}<button class="btn ghost small" data-act="hide-item">この問題を今後出さない</button></div>`
+      <div class="row"><button class="btn primary" data-act="next" id="nextbtn">次へ</button>${!it.ai && !S.canExplain && !S.lookup[Q.list[Q.i].k] ? '<button class="btn" data-act="lookup">意味を調べる</button>' : ''}${it.ai || !S.canExplain || (S.exp[Q.list[Q.i].k] && S.exp[Q.list[Q.i].k].state !== 'error') ? '' : `<button class="btn" data-act="explain">${S.exp[Q.list[Q.i].k] ? 'もう一度解説' : '用語の解説'}</button>`}${!r.ok && r.typed && !entry.choices ? '<button class="btn" data-act="mark-ok">実は合ってた</button>' : ''}<button class="btn ghost small" data-act="hide-item">この問題を今後出さない</button></div>`
     : `${entry.choices ? choiceList(entry, null) : `<form class="answer-row" id="ansform"><input id="ans" autocomplete="off" placeholder="（　）に入る言葉" aria-label="答え"><button class="btn primary" type="submit">答え合わせ</button></form>`}
       <div class="row"><button class="btn ghost" data-act="reveal">わからない（答えを見る）</button><button class="btn ghost small" data-act="quiz-reset">やめる</button></div>`}
   </section>`;
@@ -1578,6 +1682,7 @@ document.addEventListener('click', async (e) => {
   if (act === 'match-close') { S.matchInfo = null; render(); return; }
   if (act === 'match-go') { const i = Number(b.dataset.i); const c = S.matchInfo.cands[i]; S.curMatchI = i; S.curMatchP = c.p; if (S.openLec !== c.lecId) { pdfHostEl = null; S.lecMode = S.noPdf[c.lecId] ? 'text' : 'pdf'; } S.openLec = c.lecId; S.openPage = c.p; render(); return; }
   if (act === 'polish') { polishLecture(b.dataset.id); return; }
+  if (act === 'ai-gen') { makeAiQuestions(b.dataset.id); return; }
   if (act === 'edit-meta') { S.editMeta = S.editMeta === S.openLec ? null : S.openLec; render(); return; }
   if (act === 'login') { doLogin(); return; }
   if (act === 'guest') { S.guest = true; LS.set('rs-guest', true); loadLocal(); return; }
@@ -1648,6 +1753,7 @@ function startQuiz() {
   for (const e of list) {
     const pool = [...new Set(S.lectures.filter((l) => l.subject === e.lec.subject).flatMap((l) => l.items.map((x) => x.a)))];
     const want = mode === 'choice' || (mode === 'auto' && isMath(e.it));
+    if (e.it.ai) { e.choices = shuffle(e.it.cp4.slice()); continue; }
     if (e.it.cp) { e.choices = shuffle([e.it.a, ...shuffle(e.it.cp.filter((x) => x !== e.it.a)).slice(0, 3)]); continue; }
     e.choices = want ? makeChoices(e.it.a, pool.length >= 4 ? pool : [...pool, ...S.lectures.flatMap((l) => l.items.map((x) => x.a))]) : null;
   }
