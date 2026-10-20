@@ -203,6 +203,9 @@ a.btn { text-decoration: none; display: inline-block; }
 .score .big { font-family: var(--font-display); font-size: 30px; color: var(--navy); letter-spacing: .04em; }
 
 /* search */
+.search.nowrap { flex-wrap: nowrap; }
+.search .btn { flex: none; }
+.backrow { justify-content: center; margin-top: 8px; }
 .search input { width: 100%; border: 1px solid var(--rule); background: var(--sheet); border-radius: 10px; padding: 12px 14px; font-size: 16px; }
 .res { background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; text-align: left; width: 100%; }
 .res .src { font-size: 12px; color: var(--muted); }
@@ -1177,7 +1180,9 @@ async function drawPage(fig, doc) {
 function viewLecture() {
   const l = S.lectures.find((x) => x.id === S.openLec);
   if (!l) { S.openLec = null; return viewLib(); }
-  let h = `<div class="viewer-head"><button class="btn small ghost" data-act="back">← 本棚</button>
+  const backLbl = S.view === 'search' ? '← 検索にもどる' : S.view === 'quiz' ? '← 問題にもどる' : '← 本棚にもどる';
+  const backBottom = `<div class="row backrow"><button class="btn" data-act="back">${backLbl}</button><button class="btn ghost small" data-act="to-top">↑ 上へ</button></div>`;
+  let h = `<div class="viewer-head"><button class="btn small ghost" data-act="back">${backLbl}</button>
     <h2>${esc(l.subject)} ${l.num != null ? '第' + l.num + '回' : ''}<br><span style="font-size:15px;font-weight:500">${esc(l.title || '')}</span></h2></div>
     <div class="row"><div class="seg" role="group" aria-label="表示"><button data-act="mode-pdf" aria-pressed="${S.lecMode === 'pdf'}">${l.kind === 'photo' ? '原本（写真）' : '原本（PDF）'}</button><button data-act="mode-text" aria-pressed="${S.lecMode === 'text'}">テキスト・赤シート</button></div>
     ${subjectMode(l.subject) === 'none' && !hasAi(l) ? '' : `<button class="btn small primary" data-act="solve" data-id="${l.id}">この回を解く</button>`}
@@ -1188,7 +1193,7 @@ function viewLecture() {
     ${aiRow(l)}
     <div class="row">${l.builtin ? '' : `<button class="btn small" data-act="edit-meta" aria-expanded="${S.editMeta === l.id}">回・タイトルを直す</button>`}<button class="btn small" data-act="manage" aria-expanded="${S.manage === l.id}">${S.manage === l.id ? '問題の一覧を閉じる' : `問題の一覧・整理`}</button></div>
     ${S.manage === l.id ? manageList(l) : ''}`;
-  if (S.lecMode === 'pdf') return h + `<div id="pdfhost" class="list"></div>`;
+  if (S.lecMode === 'pdf') return h + `<div id="pdfhost" class="list"></div>` + backBottom;
   if (S.noPdf[l.id] && l.kind === 'photo') h += `<p class="notice">写真の原本は、写真を入れた端末にだけ保存されています。この端末では文字だけ表示しています。</p>`;
   else if (S.noPdf[l.id]) h += `<p class="notice row">この端末にはPDFの原本がないので、文字だけ表示しています。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
   h += `<label class="toggle"><input type="checkbox" id="sheet" ${S.sheetOn ? 'checked' : ''}> 赤シートをかける（赤字をタップでめくる）</label>
@@ -1200,7 +1205,7 @@ function viewLecture() {
     pg.lines.slice(1).forEach((segs) => { h += `<p>${lineHtml(segs)}</p>`; });
     h += `</article>`;
   }
-  return h + `</div>`;
+  return h + `</div>` + backBottom;
 }
 
 function polishRow(l) {
@@ -1466,7 +1471,7 @@ function quizCard(Q) {
   const { lec, it } = entry;
   const r = Q.result;
   const blank = r ? `<span class="blank">${esc(it.a)}</span>` : `<span class="blank">？</span>`;
-  return `<section class="card">
+  return `<div class="row quizbar"><button class="btn small ghost" data-act="quiz-reset">← やめて一覧にもどる</button></div><section class="card">
     <div class="where"><span class="kind ${it.ai || it.g || isMath(it) ? 'm' : 't'}">${it.ai ? 'AI問題' : it.g ? '関数' : isMath(it) ? '計算・式' : '用語'}</span><b>${esc(lec.subject)} 第${lec.num ?? '?'}回</b><span>p.${it.p}</span><button class="btn small ghost" data-act="goto" data-id="${lec.id}" data-p="${it.p}">レジュメで見る</button></div>
     <div class="stem">${it.ai ? '正しいものを選べ' : entry.choices ? '（　）に入る正しいものを選べ' : (isMath(it) ? '（　）に入るものを答えよ' : '（　）に入る用語を答えよ')}</div>
     ${it.ai ? `<div class="q aiq">${esc(it.aq)}</div>` : `<div class="q">${it.t ? `<span class="ctx">${esc(it.t)}</span>` : ''}${esc(qb(it))}${blank}${esc(qf(it))}</div>`}
@@ -1475,7 +1480,7 @@ function quizCard(Q) {
       ${it.ai && it.e ? `<div class="explain"><span class="lbl">解説 · Gemini</span><div class="body">${esc(it.e)}</div></div>` : ''}
       ${explainBox(Q.list[Q.i].k)}
       ${S.lookup[Q.list[Q.i].k] || S.exp[Q.list[Q.i].k] ? lookupBox(entry) : ''}
-      <div class="row"><button class="btn primary" data-act="next" id="nextbtn">次へ</button>${!it.ai && !S.canExplain && !S.lookup[Q.list[Q.i].k] ? '<button class="btn" data-act="lookup">意味を調べる</button>' : ''}${it.ai || !S.canExplain || (S.exp[Q.list[Q.i].k] && S.exp[Q.list[Q.i].k].state !== 'error') ? '' : `<button class="btn" data-act="explain">${S.exp[Q.list[Q.i].k] ? 'もう一度解説' : '用語の解説'}</button>`}${!r.ok && r.typed && !entry.choices ? '<button class="btn" data-act="mark-ok">実は合ってた</button>' : ''}<button class="btn ghost small" data-act="hide-item">この問題を今後出さない</button></div>`
+      <div class="row"><button class="btn primary" data-act="next" id="nextbtn">次へ</button>${!it.ai && !S.canExplain && !S.lookup[Q.list[Q.i].k] ? '<button class="btn" data-act="lookup">意味を調べる</button>' : ''}${it.ai || !S.canExplain || (S.exp[Q.list[Q.i].k] && S.exp[Q.list[Q.i].k].state !== 'error') ? '' : `<button class="btn" data-act="explain">${S.exp[Q.list[Q.i].k] ? 'もう一度解説' : '用語の解説'}</button>`}${!r.ok && r.typed && !entry.choices ? '<button class="btn" data-act="mark-ok">実は合ってた</button>' : ''}<button class="btn ghost small" data-act="hide-item">この問題を今後出さない</button><button class="btn ghost small" data-act="quiz-reset">やめる</button></div>`
     : `${entry.choices ? choiceList(entry, null) : `<form class="answer-row" id="ansform"><input id="ans" autocomplete="off" placeholder="（　）に入る言葉" aria-label="答え"><button class="btn primary" type="submit">答え合わせ</button></form>`}
       <div class="row"><button class="btn ghost" data-act="reveal">わからない（答えを見る）</button><button class="btn ghost small" data-act="quiz-reset">やめる</button></div>`}
   </section>`;
@@ -1617,7 +1622,7 @@ function finderPanel() {
   return `<section class="panel finder"><h3>小テストの参考資料を探す</h3>
     <div style="font-size:13px;color:var(--muted)">小テストの問題に関係するレジュメのページを探して、自動で開きます。${S.canImage ? 'スクショを選ぶか、この画面で貼り付け（Ctrl+V / 長押しでペースト）してください。' : '問題文をコピーして貼り付けてください。'}</div>
     ${S.canImage ? `<div class="row"><label class="btn primary" for="shot">スクショを選ぶ</label><input id="shot" type="file" accept="image/*" hidden></div>` : ''}
-    <form class="grid-form" id="findform"><textarea id="quiztext" rows="3" placeholder="例：特許権の存続期間は原則として出願日から何年か。" aria-label="小テストの問題文">${esc(S.quizText || '')}</textarea><div class="row"><button class="btn ${S.canImage ? '' : 'primary'}" type="submit">この問題文で探す</button></div></form>
+    <form class="grid-form" id="findform"><textarea id="quiztext" rows="3" placeholder="例：特許権の存続期間は原則として出願日から何年か。" aria-label="小テストの問題文">${esc(S.quizText || '')}</textarea><div class="row"><button class="btn ${S.canImage ? '' : 'primary'}" type="submit">この問題文で探す</button><button class="btn ghost" type="button" data-act="find-clear">消す</button></div></form>
     ${S.finding ? `<p class="notice">${esc(S.finding)}</p>` : ''}${S.findMsg ? `<p class="err">${esc(S.findMsg)}</p>` : ''}
   </section>`;
 }
@@ -1628,7 +1633,7 @@ function matchBanner(l) {
     <div class="row">${M.cands.map((c, i) => `<button class="btn small ${c.lecId === l.id && String(c.p) === String(S.curMatchP ?? M.cands[0].p) && i === (S.curMatchI ?? 0) ? 'primary' : ''}" data-act="match-go" data-i="${i}">${i === 0 ? 'いちばん近い：' : ''}${esc(c.subject)} 第${c.num ?? '?'}回 p.${c.p}</button>`).join('')}</div></section>`;
 }
 function viewSearch() {
-  return finderPanel() + `<h2 class="sec">キーワード検索</h2><div class="search"><input id="q" type="search" placeholder="キーワードを入力（例：特許、差別化）" value="${esc(S.q)}" aria-label="キーワード検索"></div><div id="results" class="list">${searchResults()}</div>`;
+  return finderPanel() + `<h2 class="sec">キーワード検索</h2><div class="search row nowrap"><input id="q" type="search" placeholder="キーワードを入力（例：特許、差別化）" value="${esc(S.q)}" aria-label="キーワード検索"><button class="btn" data-act="q-clear">消す</button></div><div id="results" class="list">${searchResults()}</div>`;
 }
 function searchResults() {
   const q = S.q.trim();
@@ -1678,7 +1683,10 @@ document.addEventListener('click', async (e) => {
   if (act === 'mode-text') { S.lecMode = 'text'; render(); return; }
   if (act === 'reattach') { S.reattachId = b.dataset.id; $('#refile').click(); return; }
   if (act === 'match-close') { S.matchInfo = null; render(); return; }
-  if (act === 'match-go') { const i = Number(b.dataset.i); const c = S.matchInfo.cands[i]; S.curMatchI = i; S.curMatchP = c.p; if (S.openLec !== c.lecId) { pdfHostEl = null; S.lecMode = S.noPdf[c.lecId] ? 'text' : 'pdf'; } S.openLec = c.lecId; S.openPage = c.p; render(); return; }
+  if (act === 'q-clear') { S.q = ''; render(); const i = $('#q'); if (i) i.focus(); return; }
+  if (act === 'find-clear') { S.quizText = ''; S.matchInfo = null; S.findMsg = ''; render(); return; }
+  if (act === 'to-top') { window.scrollTo(0, 0); return; }
+  if (act === 'match-go') { if (!S.openLec) S.backY = window.scrollY; const i = Number(b.dataset.i); const c = S.matchInfo.cands[i]; S.curMatchI = i; S.curMatchP = c.p; if (S.openLec !== c.lecId) { pdfHostEl = null; S.lecMode = S.noPdf[c.lecId] ? 'text' : 'pdf'; } S.openLec = c.lecId; S.openPage = c.p; render(); return; }
   if (act === 'polish') { polishLecture(b.dataset.id); return; }
   if (act === 'ai-gen') { makeAiQuestions(b.dataset.id); return; }
   if (act === 'edit-meta') { S.editMeta = S.editMeta === S.openLec ? null : S.openLec; render(); return; }
@@ -1687,10 +1695,11 @@ document.addEventListener('click', async (e) => {
   if (act === 'logout') { S.guest = false; LS.set('rs-guest', false); fauth && fauth.signOut(); return; }
   if (act === 'manage') { S.manage = S.manage === S.openLec ? null : S.openLec; render(); return; }
   if (act === 'hide' || act === 'unhide') { const k = b.dataset.k; if (act === 'hide') S.progress.hidden[k] = 1; else delete S.progress.hidden[k]; queueProgress(); const y = window.scrollY; render(); window.scrollTo(0, y); return; }
+  if ((act === 'open' || act === 'goto') && !S.openLec) S.backY = window.scrollY;
   if (act === 'open' || act === 'goto') { if (S.openLec !== id) { pdfHostEl = null; S.lecMode = S.noPdf[id] ? 'text' : 'pdf'; } }
   if (act === 'open') { S.openLec = id; S.confirmDel = null; render(); window.scrollTo(0, 0); }
   else if (act === 'goto') { S.openLec = id; S.openPage = b.dataset.p; render(); }
-  else if (act === 'back') { S.openLec = null; S.confirmDel = null; render(); }
+  else if (act === 'back') { S.openLec = null; S.confirmDel = null; S.openPage = null; render(); const y = S.backY || 0; S.backY = 0; requestAnimationFrame(() => window.scrollTo(0, y)); }
   else if (act === 'solve') { S.openLec = null; S.view = 'quiz'; const l = S.lectures.find((x) => x.id === id); S.quizCfg = { ...S.quizCfg, subject: l ? l.subject : '', lec: id }; S.quiz = null; startQuiz(); }
   else if (act === 'start') startQuiz();
   else if (act === 'smode') { S.progress.subjectMode = { ...(S.progress.subjectMode || {}), [b.dataset.sub]: b.dataset.v }; queueProgress(); render(); }
@@ -1704,7 +1713,7 @@ document.addEventListener('click', async (e) => {
     LS.set('rs-quiz-prefs', { answer: S.quizCfg.answer, mode: S.quizCfg.mode }); render();
   }
   else if (act === 'qmode') { S.quizCfg.mode = b.dataset.v; S.quizMsg = ''; LS.set('rs-quiz-prefs', { answer: S.quizCfg.answer, mode: S.quizCfg.mode }); render(); }
-  else if (act === 'quiz-reset') { S.quiz = null; render(); }
+  else if (act === 'quiz-reset') { S.quiz = null; render(); window.scrollTo(0, 0); }
   else if (act === 'explain') explain();
   else if (act === 'lookup') { S.lookup[S.quiz.list[S.quiz.i].k] = 1; render(); }
   else if (act === 'choose') { const e = S.quiz.list[S.quiz.i]; const c = e.choices[Number(b.dataset.i)]; judge(c, c === e.it.a); }
