@@ -163,6 +163,10 @@ label.f input, label.f select { border: 1px solid var(--rule); background: var(-
 .mask { color: var(--red); font-weight: 700; }
 .sheet-fab { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 20; border: 0; border-radius: 999px; padding: 12px 18px; font: inherit; font-size: 14px; font-weight: 700; color: #fff; background: var(--navy); box-shadow: 0 4px 14px rgba(0,0,0,.25); cursor: pointer; }
 .sheet-fab.on { background: var(--red); }
+.ocrmode { display: grid; gap: 6px; justify-items: center; margin-top: 10px; }
+.inapp { background: var(--redtint); border: 1.5px solid var(--red); border-radius: 12px; padding: 14px 16px; display: grid; gap: 8px; margin-bottom: 12px; }
+.inapp p { margin: 0; font-size: 14px; line-height: 1.6; }
+.inapp .btn { justify-self: start; }
 .seg button.nopdf { opacity: .6; }
 .seg button.nopdf small { display: block; font-size: 10px; font-weight: 500; }
 .notice.flash { border-color: var(--red); color: var(--ink); }
@@ -524,9 +528,15 @@ function userCol() {
     },
   };
 }
+const IN_APP = /\bLine\/|FBAN|FBAV|Instagram|Twitter|TikTok|KAKAOTALK/i.test(navigator.userAgent || '');
+function inAppBanner() {
+  if (!IN_APP) return '';
+  const url = location.origin + location.pathname + '?openExternalBrowser=1';
+  return `<div class="inapp"><b>LINEなどのアプリの中で開いています</b><p>この画面ではGoogleでログインできません。下のボタンで、SafariやChromeで開き直してください。</p><a class="btn primary" href="${url}" target="_blank" rel="noopener">ブラウザで開き直す</a><p class="hint">開かないときは、右上（または右下）の「…」→「ブラウザで開く」を押してください。</p></div>`;
+}
 function loginView() {
   const err = S.authErr ? `<p class="err">${esc(S.authErr)}</p>` : '';
-  return `<section class="intro login"><div class="intro-head"><h2>RejuRejuへようこそ</h2></div>
+  return inAppBanner() + `<section class="intro login"><div class="intro-head"><h2>RejuRejuへようこそ</h2></div>
     <ol class="steps">
       <li><span class="no">①</span><div><b>レジュメをまとめることができる</b><p>授業のPDFや、紙のプリント・メモの写真を入れると、教科ごとのフォルダに第1回、第2回…と並びます。</p></div></li>
       <li><span class="no">②</span><div><b>まとめたものを問題形式にしてくれる</b><p>赤字は穴埋め問題に、計算や式は4択問題になります。</p></div></li>
@@ -551,6 +561,7 @@ async function doLogin() {
     const c = e && e.code;
     if (c === 'auth/popup-blocked' || c === 'auth/operation-not-supported-in-this-environment') { try { await fauth.signInWithRedirect(provider); return; } catch (e2) { e = e2; } }
     if (c === 'auth/popup-closed-by-user' || c === 'auth/cancelled-popup-request') return;
+    if (c === 'auth/web-storage-unsupported' || c === 'auth/operation-not-allowed' || IN_APP) { S.authErr = 'このアプリの中ではGoogleでログインできません。上の「ブラウザで開き直す」から開いてください。'; render(); return; }
     S.authErr = c === 'auth/unauthorized-domain' ? 'このサイトのアドレスがFirebaseに登録されていないため、ログインできません。' : 'ログインできませんでした。もう一度お試しください。';
     render();
   }
@@ -616,6 +627,7 @@ async function init() {
   S.collapsed = LS.get('rs-collapsed', {});
   S.sheetOn = LS.get('rs-sheet', true) !== false;
   S.autoSave = LS.get('rs-autosave', true) !== false;
+  S.ocrMode = LS.get('rs-ocr', 'local');
   S.introHidden = !!LS.get('rs-intro-hidden', false);
   S.exp = LS.get('rs-explain', {});
   { const qp = LS.get('rs-quiz-prefs', null); if (qp) { if (qp.answer) S.quizCfg.answer = qp.answer; if (qp.mode) S.quizCfg.mode = qp.mode; } }
@@ -736,7 +748,6 @@ async function savePending(p) {
   await saveLecture(lec);
   try { await IDB.put(lec.id, p.photos ? { photos: p.photos } : p.file); } catch { }
   if (S.canExplain) setTimeout(() => polishLecture(lec.id), 300);
-  else queueReview(lec.id);
   if (!subjectList().includes(lec.subject)) setSubjects([...subjectList(), lec.subject]);
   if (!rawDocs.some((d) => d.id === lec.id)) { rawDocs.push(lec); mergeLectures(rawDocs); }
   p.savedId = lec.id;
@@ -765,6 +776,7 @@ async function shrinkImage(file, max = 1600) {
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
     const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    if (k === 1 && /^image\/(jpeg|png)$/.test(file.type) && file.size < 6e6) return file; // already small enough: keep the original pixels
     const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     return await new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), 'image/jpeg', 0.85));
@@ -820,6 +832,213 @@ function geminiErrMsg(e) {
   if (/import|fetch|network|failed to load/i.test(m)) return '写真を読む機能を読み込めませんでした。ネット接続を確認して、もう一度お試しください。';
   return '写真を読み取れませんでした。明るい場所で、プリント全体がまっすぐ写るように撮り直してみてください。';
 }
+// ---------- reading photos inside the browser (no Gemini, no daily limit) ----------
+const TESS_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js';
+let tessWorker = null;
+const loadScript = (src) => new Promise((res, rej) => { const el = document.createElement('script'); el.src = src; el.onload = res; el.onerror = () => rej(new Error('failed to load')); document.head.appendChild(el); });
+async function loadTess() {
+  if (!window.Tesseract) await loadScript(TESS_URL);
+  if (!tessWorker) {
+    tessWorker = await Tesseract.createWorker('jpn', 1, { logger: (m) => {
+      if (m && m.status && /load|download|init/i.test(m.status) && m.progress < 1) { const n = Math.round((m.progress || 0) * 100); const el = document.getElementById('ocrmsg'); if (el) el.textContent = `文字を読む準備をしています…（初回だけ少し時間がかかります ${n}%）`; }
+    } });
+  }
+  return tessWorker;
+}
+async function imageData(blob) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(img, 0, 0);
+    const id = ctx.getImageData(0, 0, c.width, c.height);
+    // how colourful the bare paper is (warm light, recycled paper), so a tinted page is not taken for a highlighter
+    const sats = []; const D = id.data;
+    for (let i = 0; i < D.length; i += 4 * 97) { const r = D[i], g = D[i + 1], b = D[i + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b); if (0.3 * r + 0.59 * g + 0.11 * b > 150) sats.push(mx ? (mx - mn) / mx : 0); }
+    sats.sort((a, b) => a - b); id.paperSat = sats.length ? sats[Math.floor(sats.length / 2)] : 0;
+    return id;
+  } finally { URL.revokeObjectURL(url); }
+}
+// is this word written in red, or painted over with a highlighter?
+function markOf(img, b) {
+  const { width: W, data: D } = img; const N = img.norm;
+  let ink = 0, red = 0, light = 0, hl = 0;
+  const x0 = Math.max(0, b.x0), x1 = Math.min(W - 1, b.x1), y0 = Math.max(0, b.y0), y1 = Math.min(img.height - 1, b.y1);
+  const step = Math.max(1, Math.floor(Math.min(x1 - x0, y1 - y0) / 24));
+  for (let y = y0; y <= y1; y += step) for (let x = x0; x <= x1; x += step) {
+    const i = (y * W + x) * 4, r = D[i], g = D[i + 1], bl = D[i + 2];
+    const mx = Math.max(r, g, bl), mn = Math.min(r, g, bl), sat = mx ? (mx - mn) / mx : 0, lum = 0.3 * r + 0.59 * g + 0.11 * bl;
+    const d = r - Math.max(g, bl), isRed = d > 22 && d / Math.max(1, r) > 0.2;
+    const dark = N ? N[y * W + x] < 190 : (lum < 150 || (sat > 0.45 && mx < 235 && lum < 200));
+    if (dark || (isRed && lum < 215)) { ink++; if (isRed) red++; }
+    else { light++; if (sat > Math.max(0.22, (img.paperSat || 0) + 0.15) && lum > 140) hl++; }
+  }
+  const rr = red / Math.max(1, ink), hh = hl / Math.max(1, light);
+  // 1 = marked, 0 = plain, -1 = cannot tell (box holds no ink), 2 = a little red (counts only next to a red word)
+  if (ink < 2 && hh <= 0.35) return -1;
+  if ((ink >= 4 && rr > 0.4) || (light >= 8 && hh > 0.35)) return 1;
+  return ink >= 4 && rr > 0.12 ? 2 : 0;
+}
+const CJK = /[　-ヿ㐀-鿿＀-￯]/;
+function prepForOcr(img) {
+  const { width: W, height: H, data: D } = img;
+  const g = document.createElement('canvas'); g.width = W; g.height = H;
+  const gctx = g.getContext('2d'); const out = gctx.createImageData(W, H); const O = out.data;
+  for (let i = 0; i < D.length; i += 4) {
+    const r = D[i], gg = D[i + 1], b = D[i + 2], d = r - Math.max(gg, b);
+    // red ink turns dark (its darkest channel), everything else keeps its brightness, so highlighter colour stays light
+    const v = d > 22 && d / Math.max(1, r) > 0.2 ? Math.min(r, gg, b) : 0.3 * r + 0.59 * gg + 0.11 * b;
+    O[i] = O[i + 1] = O[i + 2] = v; O[i + 3] = 255;
+  }
+  gctx.putImageData(out, 0, 0);
+  // paper brightness around each point (blurred small copy), to cancel shadows and uneven light
+  const sw = Math.max(8, Math.round(W / 24)), sh = Math.max(8, Math.round(H / 24));
+  const sm = document.createElement('canvas'); sm.width = sw; sm.height = sh;
+  const sctx = sm.getContext('2d'); sctx.filter = 'blur(2px)'; sctx.drawImage(g, 0, 0, sw, sh);
+  const bg = document.createElement('canvas'); bg.width = W; bg.height = H;
+  const bctx = bg.getContext('2d', { willReadFrequently: true }); bctx.imageSmoothingEnabled = true; bctx.drawImage(sm, 0, 0, W, H);
+  const B = bctx.getImageData(0, 0, W, H).data;
+  const norm = new Uint8ClampedArray(W * H);
+  for (let i = 0; i < O.length; i += 4) {
+    const n = Math.min(255, (O[i] * 255) / Math.max(40, B[i] + 8));
+    const v = n > 215 ? 255 : Math.max(0, Math.round((n - 40) * 1.25));
+    O[i] = O[i + 1] = O[i + 2] = v;
+    norm[i >> 2] = n;
+  }
+  img.norm = norm;
+  gctx.putImageData(out, 0, 0);
+  return g;
+}
+function ocrRuns(data, img, redWords = []) {
+  // 1) every line as pieces (one per character), each with its colour
+  const lines = [];
+  for (const blk of data.blocks || []) for (const par of blk.paragraphs || []) for (const ln of par.lines || []) {
+    if ((ln.confidence ?? 100) < 25) continue; // a smudge, a picture, or a line we could not read
+    // Latin fragments with low confidence are usually smudges, fingers or ruled boxes read as letters
+    const words = (ln.words || []).filter((wd) => wd.text && wd.text.trim() && (wd.confidence > 45 || (CJK.test(wd.text) && wd.confidence > 10)));
+    if (!words.length) continue;
+    const pieces = words.flatMap((wd) => {
+      const wm = markOf(img, wd.bbox);
+      const syms = wd.symbols && wd.symbols.length ? wd.symbols : [wd];
+      return syms.map((sy, k) => { const sm = markOf(img, sy.bbox); return { t: sy.text.trim(), m: sm === 1 || wm === 1 ? 1 : sm, gap: k === 0, conf: wd.confidence, x: sy.bbox.x0, x1: sy.bbox.x1, ym: (sy.bbox.y0 + sy.bbox.y1) / 2, h: sy.bbox.y1 - sy.bbox.y0 }; });
+    });
+    if (pieces.map((pc) => pc.t).join('').replace(/[\s\p{P}\p{S}ー]/gu, '').length < 2) continue;
+    lines.push({ y0: ln.bbox.y0, y1: ln.bbox.y1, x0: ln.bbox.x0, pieces });
+  }
+  // 2) pieces of the same printed row can come back as separate lines (〔 高市 早苗 〕 far to the right): put them back together
+  lines.sort((a, b) => a.y0 - b.y0);
+  const rows = [];
+  // a photo is often a little tilted, so compare heights where the two pieces meet, not the middle of the whole line
+  const edgeY = (ln, right) => { const ps = right ? ln.pieces.slice(-3) : ln.pieces.slice(0, 3); return ps.reduce((n, p) => n + p.ym, 0) / ps.length; };
+  const charH = (ln) => { const hs = ln.pieces.map((p) => p.h).sort((a, b) => a - b); return hs[Math.floor(hs.length / 2)] || (ln.y1 - ln.y0); };
+  for (const ln of lines) {
+    let row = null, best = Infinity;
+    for (const r of rows) {
+      const left = r.parts.filter((q) => q.pieces[q.pieces.length - 1].x1 <= ln.x0 + 5).sort((a, b) => b.x0 - a.x0)[0];
+      if (!left) continue;
+      const d = Math.abs(edgeY(left, true) - edgeY(ln, false));
+      if (d < Math.min(charH(left), charH(ln)) * 0.6 && d < best) { best = d; row = r; }
+    }
+    if (row) { row.parts.push(ln); row.y0 = Math.min(row.y0, ln.y0); row.y1 = Math.max(row.y1, ln.y1); } else rows.push({ y0: ln.y0, y1: ln.y1, parts: [ln] });
+  }
+  for (const row of rows) row.pieces = row.parts.sort((a, b) => a.x0 - b.x0).flatMap((ln, i) => ln.pieces.map((pc, k) => ({ ...pc, gap: pc.gap || (i > 0 && k === 0) })));
+  // 2b) red words read on their own (from a picture with only the red ink) replace whatever was read at that spot
+  for (const rw of redWords) {
+    const syms = (rw.symbols && rw.symbols.length ? rw.symbols : [rw]).filter((sy) => sy.text.trim());
+    if (!syms.length) continue;
+    const ym = syms.reduce((n, sy) => n + (sy.bbox.y0 + sy.bbox.y1) / 2, 0) / syms.length, h = rw.bbox.y1 - rw.bbox.y0, x0 = rw.bbox.x0, x1 = rw.bbox.x1;
+    let row = null, best = Infinity;
+    for (const r of rows) {
+      const near = r.pieces.slice().sort((a, b) => Math.abs((a.x + a.x1) / 2 - (x0 + x1) / 2) - Math.abs((b.x + b.x1) / 2 - (x0 + x1) / 2)).slice(0, 4);
+      if (!near.length) continue;
+      const d = Math.abs(near.reduce((n, p) => n + p.ym, 0) / near.length - ym);
+      if (d < Math.max(h, near[0].h) * 0.6 && d < best) { best = d; row = r; }
+    }
+    const add = syms.map((sy, k) => ({ t: sy.text.trim(), m: 1, gap: k === 0, conf: 99, x: sy.bbox.x0, x1: sy.bbox.x1, ym: (sy.bbox.y0 + sy.bbox.y1) / 2, h: sy.bbox.y1 - sy.bbox.y0, fromRed: true }));
+    if (!row) { rows.push({ y0: rw.bbox.y0, y1: rw.bbox.y1, parts: [], pieces: add }); continue; }
+    const over = (pc) => !pc.fromRed && pc.x1 > x0 + 2 && pc.x < x1 - 2;
+    const mainRed = row.pieces.filter((pc) => over(pc) && pc.m === 1 && !/^[\s\p{P}\p{S}]+$/u.test(pc.t)).map((pc) => pc.t).join('');
+    if (mainRed.length >= add.map((p) => p.t).join('').length) continue; // the full read already got this answer, and got more of it
+    row.pieces = row.pieces.filter((pc) => !over(pc) || /^[〔〕［］\[\]【】「」()（）]$/.test(pc.t)).concat(add).sort((a, b) => a.x - b.x);
+  }
+  rows.sort((a, b) => a.y0 - b.y0);
+  // 3) runs of text with red/marked flags
+  const runs = [];
+  for (const row of rows) {
+    const pieces = row.pieces;
+    if (pieces[0]) pieces[0].t = pieces[0].t.replace(/^[>＞〉»➢▶►・ー─\-–—=_|]+/, '');
+    let prev = null, prevM = 0;
+    for (const pc of pieces) {
+      let t = pc.t; if (!t) continue;
+      // Tesseract puts spaces between Japanese characters; keep spaces only between Latin words
+      if (prev && pc.gap && !(CJK.test(prev.slice(-1)) || CJK.test(t[0]))) t = ' ' + t;
+      prev = t;
+      let m = /^[\s〔〕［］\[\]【】「」『』()（）|｜:：、。,.]+$/.test(t) ? 0 : pc.m;
+      // unsure boxes follow the red kanji just before them (産業財産権), otherwise they are plain
+      if (m === -1 || m === 2) m = prevM && /^\p{Script=Han}+$/u.test(t) ? 1 : 0;
+      if (m && pc.conf < 40 && !CJK.test(t)) m = 0;                        // red smudges and fingers read as letters
+      prevM = /^[\s〔〕［］\[\]【】「」]+$/.test(t) ? prevM : m;
+      const last = runs[runs.length - 1];
+      if (last && last.t !== '\n' && !!last.red === !!m) last.t += t; else runs.push({ t, red: !!m });
+    }
+    // where the two reads overlap, a kanji can come out twice (為替替相場): the same kanji twice in a row is almost never real
+    for (const r of runs) if (r.red && r.t !== '\n') r.t = r.t.replace(/(\p{Script=Han})\1/gu, '$1').replace(/(\d)\s+(?=\d)/g, '$1').replace(/^[\s=＝]+/, '');
+    // colour after the end of a sentence at the edge of the page is a finger or the desk, not a marking
+    const lastRun = runs[runs.length - 1];
+    if (lastRun && lastRun.red && runs.length > 1 && /[。)）]\s*$/.test(runs[runs.length - 2].t) && lastRun.t.replace(/\s/g, '').length <= 3) lastRun.red = false;
+    runs.push({ t: '\n' });
+  }
+  return runs;
+}
+// a picture with only the red ink (everything else white), read on its own: catches light red answers the full read misses
+async function readRedOnly(w, img) {
+  const { width: W, height: H, data: D } = img; const N = img.norm;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d'); const out = ctx.createImageData(W, H); const O = out.data;
+  let count = 0;
+  for (let i = 0, j = 0; i < D.length; i += 4, j++) {
+    const r = D[i], g = D[i + 1], b = D[i + 2], d = r - Math.max(g, b);
+    const on = d > 22 && d / Math.max(1, r) > 0.2 && (!N || N[j] < 215);
+    const v = on ? 0 : 255; if (on) count++;
+    O[i] = O[i + 1] = O[i + 2] = v; O[i + 3] = 255;
+  }
+  if (count < 200) return []; // no red on this page
+  ctx.putImageData(out, 0, 0);
+  try { await w.setParameters({ tessedit_pageseg_mode: '11' }); } catch { }
+  const data = (await w.recognize(c, {}, { blocks: true })).data;
+  const words = [];
+  for (const blk of data.blocks || []) for (const par of blk.paragraphs || []) for (const ln of par.lines || []) for (const wd of ln.words || []) {
+    const t = (wd.text || '').trim();
+    if (!t || wd.confidence < 55) continue;
+    if (!CJK.test(t) && !/^[A-Za-z0-9%.]{2,}$/.test(t) && !/^\d+$/.test(t)) continue; // stray marks
+    if (/^[\p{P}\p{S}ー]+$/u.test(t)) continue;
+    words.push(wd);
+  }
+  return words;
+}
+async function ocrRead(blobs) {
+  const w = await loadTess();
+  // PSM 4 = "one column of text of varying sizes": keeps handout lines with wide gaps (〔　答え　〕) together
+  const pages = [];
+  for (let n = 0; n < blobs.length; n++) {
+    const el = document.getElementById('ocrmsg'); if (el) el.textContent = `写真の文字を読んでいます…（${n + 1}/${blobs.length}枚目）`;
+    const img = await imageData(blobs[n]);
+    const prep = prepForOcr(img);
+    const redWords = await readRedOnly(w, img);
+    // two ways of cutting the page into lines; keep the one that finds more coloured answers (then more text)
+    let runs = null, bestScore = -1;
+    for (const psm of (window.__psm ? [window.__psm] : ['4', '6'])) {
+      try { await w.setParameters({ tessedit_pageseg_mode: psm }); } catch { }
+      const data = (await w.recognize(prep, {}, { blocks: true })).data;
+      const r = ocrRuns(data, img, redWords);
+      const sc = r.reduce((n, x) => n + (x.red ? 4 : 0.1) * x.t.replace(/[\s\p{P}\p{S}]/gu, '').length, 0);
+      if (sc > bestScore) { bestScore = sc; runs = r; }
+    }
+    pages.push({ p: n + 1, runs });
+  }
+  return pages;
+}
+
 async function handlePhotos(files) {
   const imgs = [...files].filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name));
   if (!imgs.length) { S.parseErr = '写真（画像ファイル）を選んでください。'; render(); return; }
@@ -827,14 +1046,21 @@ async function handlePhotos(files) {
   S.parsing = 'photo'; S.parseErr = ''; render();
   try {
     const blobs = [];
-    for (const f of imgs) blobs.push(await shrinkImage(f));
-    const data = await geminiRead(blobs);
-    const pagesRuns = (data.pages || []).map((pg, i) => {
-      const runs = [];
-      for (const ln of pg.lines || []) { for (const s of ln.segs || []) if (s && s.t) runs.push({ t: String(s.t), red: s.m === 1 }); runs.push({ t: '\n' }); }
-      return { p: i + 1, runs };
-    });
-    const lec = buildLecture(pagesRuns, { each: true });
+    for (const f of imgs) blobs.push(await shrinkImage(f, S.ocrMode === 'gemini' ? 1600 : 3200));
+    let data = {}, lec;
+    if (S.ocrMode === 'gemini') {
+      data = await geminiRead(blobs);
+      const pagesRuns = (data.pages || []).map((pg, i) => {
+        const runs = [];
+        for (const ln of pg.lines || []) { for (const s of ln.segs || []) if (s && s.t) runs.push({ t: String(s.t), red: s.m === 1 }); runs.push({ t: '\n' }); }
+        return { p: i + 1, runs };
+      });
+      lec = buildLecture(pagesRuns, { each: true });
+    } else {
+      lec = buildLecture(await ocrRead(blobs));
+      const first = pageText(lec.pages, 1);
+      data = { num: findNum(first, true) || 0, title: (first.match(/「([^」]+)」/) || [])[1] || '' };
+    }
     const chars = lec.pages.reduce((n, pg) => n + pg.lines.reduce((m, l) => m + l.reduce((k, s) => k + s[0].length, 0), 0), 0);
     if (chars < 10) throw new Error('empty');
     const d = new Date();
@@ -843,7 +1069,8 @@ async function handlePhotos(files) {
     await settle({ kind: 'photo', subject: ps.subject, sure: ps.sure, num: data.num > 0 ? data.num : null, title: norm(data.title || '').trim() || (lec.pages[0] && lec.pages[0].title) || '',
       fileName: `写真 ${d.getMonth() + 1}/${d.getDate()}（${blobs.length}枚）`, pages: lec.pages, items: lec.items, numPages: blobs.length, photos: blobs, key: Math.random().toString(36).slice(2) });
   } catch (e) {
-    S.parseErr = e && e.message === 'empty' ? '写真から文字を読み取れませんでした。明るい場所で、プリント全体がまっすぐ写るように撮り直してみてください。' : geminiErrMsg(e);
+    S.parseErr = e && e.message === 'empty' ? '写真から文字を読み取れませんでした。明るい場所で、プリント全体がまっすぐ写るように撮り直してみてください。'
+      : S.ocrMode === 'gemini' ? geminiErrMsg(e) : '写真を読み取れませんでした。ネット接続を確認して、もう一度お試しください（初回は文字を読む準備のデータをダウンロードします）。';
   }
   S.parsing = false; S.addTarget = null; render();
 }
@@ -1125,11 +1352,11 @@ function viewHelp() {
   ${sec('レジュメを入れる', `<p>授業のPDFも、紙で配られたプリントや手書きのメモも、「本棚」タブから入れられます。入れたものは、教科ごとのフォルダに第1回、第2回…と順番に並びます。</p>
     <h4>教科を作る</h4><ol><li>「新しい教科名」の欄に教科名（例：経営組織論）を入れます。</li><li>「＋ 教科を作る」を押します。</li></ol>
     <h4>PDFを入れる</h4><ol><li>「PDFを追加」を押して、PDFを選びます。何個でもまとめて選べます。パソコンなら、本棚の画面にまとめてドラッグするだけでもOKです。</li><li>ファイルの名前と中身から、教科と第何回かを自動で判断して、そのまま本棚に入ります。</li><li>教科や回が分からなかったものと、もう入っている回だけ、確認の画面が出ます。直して「本棚に保存」（いくつもあるときは「まとめて本棚に保存」）を押します。</li></ol><p>確認してから保存したいときは、「教科と回が分かったら、確認せずにそのまま保存する」のチェックを外してください。</p>
-    <h4>紙のプリント・メモを写真で入れる</h4><ol><li>教科の横の「写真を追加」を押して、写真を選びます。1回分は${MAX_PHOTOS}枚までまとめて選べます。</li><li>Geminiが文字を読み取ります（30秒ほどかかることがあります）。</li><li>「読み取った内容を見る」で、赤ペンのところが赤くなっているか確かめて、「本棚に保存」を押します。</li></ol>
+    <h4>紙のプリント・メモを写真で入れる</h4><ol><li>教科の横の「写真を追加」を押して、写真を選びます。1回分は${MAX_PHOTOS}枚までまとめて選べます。</li><li>文字を読み取ります。写真の読み方は2つから選べます。「ふつう」はこの端末の中で読むので回数の制限がなく、印刷されたプリントにおすすめです（初めてのときだけ、準備に少し時間がかかります）。手書きのメモは「Gemini」を選ぶと、（　）に書いた答えまで読めます（1日に使える回数があります）。</li><li>「読み取った内容を見る」で、赤ペンのところが赤くなっているか確かめて、「本棚に保存」を押します。</li></ol>
     <p>うまく読める写真のコツ：</p><ul><li>明るい場所で、プリント全体がまっすぐ写るように撮る</li><li>1枚の写真に1ページずつ</li><li>名前や学籍番号が写らないようにする</li></ul>
     <p>問題になるのは次のところです。</p>
     ${tbl(['入れたもの', '問題になるところ'], [['PDF', '赤字'], ['写真（紙・メモ）', '赤ペン・色ペン、蛍光マーカー、丸で囲んだ語句、（　）に書いた答え']])}
-    <p>表紙や「本日の講義内容」「アジェンダ」のページの色文字、図や表のラベル、見出しの一部、出席・成績・提出期限などの連絡用の赤字は、問題にしません。保存したあとは、Geminiが残った問題を1問ずつ見直して、関係ない問題を外し、文章を読みやすく整えます（前に入れたレジュメは、レジュメの画面の「Geminiで問題を見直す」から）。</p>`)}
+    <p>表紙や「本日の講義内容」「アジェンダ」のページの色文字、図や表のラベル、見出しの一部、出席・成績・提出期限などの連絡用の赤字は、問題にしません。もっと細かく直したいときは、レジュメの画面の「Geminiで問題を見直す」を押すと、Geminiが1問ずつ見直して、関係ない問題を外し、文章を読みやすく整えます。</p>`)}
   ${sec('レジュメを見る', `<p>本棚で「レジュメ」を押すと、その回の中身を見られます。上のボタンで、見方を2つから選べます。</p>
     <ul><li><b>原本（PDF・写真）</b>：入れたものをそのまま表示します。</li><li><b>テキスト・赤シート</b>：文字だけを表示します。「赤シートをかける」にチェックを入れると赤字が隠れて、タップするとめくれます。</li></ul>
     <p>原本は、入れた端末の中だけに保存されます。別の端末では文字だけが表示されますが、PDFなら「PDFを選んで原本を表示」でもう一度入れられます。</p>
@@ -1148,7 +1375,7 @@ function viewHelp() {
       ['手書きの文字が間違っている', '「テキスト・赤シート」で確かめて、おかしい問題は「問題の一覧・整理」で消してください。'],
       ['別の端末で原本が出ない', '原本は入れた端末にだけ保存されます。文字と問題はどの端末でも使えます。'],
       ['新しくなったはずが、前のまま', 'パソコンなら Ctrl + F5、スマホならページを開き直します。']]) + `
-    <h4>注意すること</h4><ul><li>写真はGoogleのGeminiで読み取ります。無料の仕組みなので、送った写真がGoogleのサービス改善に使われることがあります。名前や学籍番号は写さないでください。</li><li>ログインして保存したレジュメは、他の利用者には見えません。ただし、RejuRejuの管理者は管理画面からデータを見られます（見ません！）。</li><li>問題は自動で作っているので、まちがいがあることもあります。気になったら「レジュメで見る」で元のページを確かめてください。</li><li>不具合や「こんな機能がほしい」があれば、大雅まで教えてください。</li></ul>`)}
+    <h4>注意すること</h4><ul><li>写真の読み方を「Gemini」にしたときは、写真がGoogleに送られます。無料の仕組みなので、送った写真がGoogleのサービス改善に使われることがあります。名前や学籍番号は写さないでください。</li><li>ログインして保存したレジュメは、他の利用者には見えません。ただし、RejuRejuの管理者は管理画面からデータを見られます（見ません！）。</li><li>問題は自動で作っているので、まちがいがあることもあります。気になったら「レジュメで見る」で元のページを確かめてください。</li><li>不具合や「こんな機能がほしい」があれば、大雅まで教えてください。</li></ul>`)}
   <div><button class="btn small ghost" data-act="help-back">← もどる</button></div>`;
 }
 
@@ -1164,10 +1391,10 @@ function introPanel() {
   </section>`;
 }
 function viewLib() {
-  let h = introPanel();
+  let h = inAppBanner() + introPanel();
   if (S.storage === 'local' && S.ready) h += `<p class="notice">ログインしていないので、レジュメと成績はこのブラウザの中だけに保存されます。右上の「ログイン」から、スマホとパソコンで同じ本棚を使えます。</p>`;
-  h += `<div class="drop" id="drop"><div class="row" style="justify-content:center"><label class="btn primary" for="file" data-act="add-any">PDFを追加</label><input id="file" type="file" accept="application/pdf,.pdf" multiple hidden><label class="btn" for="photo" data-act="add-any">写真を追加（紙・メモ）</label><input id="photo" type="file" accept="image/*" multiple hidden></div><div style="margin-top:6px;font-size:13px">PDFや写真を、何個でもまとめてこの画面にドラッグしてOK。ファイルの名前と中身から、教科と第何回かを自動で判断して本棚に入れます。</div><label class="chk autosave"><input type="checkbox" id="autosave" ${S.autoSave ? 'checked' : ''}><span>教科と回が分かったら、確認せずにそのまま保存する</span></label><div class="hint" style="margin-top:4px">紙のプリントや手書きのメモは写真で入れられます（1回分は${MAX_PHOTOS}枚までまとめて選べます）。赤ペン・マーカー・（　）に書いた答えが問題になります。写真はGoogleのGeminiで読み取るので、名前や学籍番号は写さないでください。</div></div>`;
-  if (S.parsing) h += `<p class="notice">${S.parsing === 'photo' ? 'Geminiが写真を読んでいます…（30秒ほどかかることがあります）' : `PDFを読み取っています…${S.parseTotal > 1 ? `（${S.parseDone}/${S.parseTotal}）` : ''}`}</p>`;
+  h += `<div class="drop" id="drop"><div class="row" style="justify-content:center"><label class="btn primary" for="file" data-act="add-any">PDFを追加</label><input id="file" type="file" accept="application/pdf,.pdf" multiple hidden><label class="btn" for="photo" data-act="add-any">写真を追加（紙・メモ）</label><input id="photo" type="file" accept="image/*" multiple hidden></div><div style="margin-top:6px;font-size:13px">PDFや写真を、何個でもまとめてこの画面にドラッグしてOK。ファイルの名前と中身から、教科と第何回かを自動で判断して本棚に入れます。</div><label class="chk autosave"><input type="checkbox" id="autosave" ${S.autoSave ? 'checked' : ''}><span>教科と回が分かったら、確認せずにそのまま保存する</span></label><div class="hint" style="margin-top:4px">紙のプリントや手書きのメモは写真で入れられます（1回分は${MAX_PHOTOS}枚までまとめて選べます）。赤ペン・マーカー・（　）に書いた答えが問題になります。</div><div class="ocrmode"><span class="hint">写真の読み方</span><div class="seg" role="group" aria-label="写真の読み方"><button data-act="ocr-mode" data-v="local" aria-pressed="${S.ocrMode !== 'gemini'}">ふつう（回数制限なし）</button><button data-act="ocr-mode" data-v="gemini" aria-pressed="${S.ocrMode === 'gemini'}">Gemini（手書きもOK）</button></div><span class="hint">${S.ocrMode === 'gemini' ? '手書きのメモや（　）に書いた答えも読めます。1日に使える回数があります。写真はGoogleに送られるので、名前や学籍番号は写さないでください。' : '印刷されたプリントにおすすめです。この端末の中で読むので、回数の制限はありません。手書きの文字はうまく読めないことがあります。'}</span></div></div>`;
+  if (S.parsing) h += `<p class="notice" id="ocrmsg">${S.parsing === 'photo' ? (S.ocrMode === 'gemini' ? 'Geminiが写真を読んでいます…（30秒ほどかかることがあります）' : '写真の文字を読んでいます…') : `PDFを読み取っています…${S.parseTotal > 1 ? `（${S.parseDone}/${S.parseTotal}）` : ''}`}</p>`;
   if (S.autoSaved.length) h += `<div class="notice saved row"><span>本棚に入れました：${S.autoSaved.map((x) => `<button class="linkbtn" data-act="open" data-id="${x.id}">${esc(x.label)}</button>`).join('、')}</span><button class="btn small ghost" data-act="saved-close">閉じる</button></div>`;
   if (S.pending.length > 1) h += `<div class="row"><button class="btn primary" data-act="save-all">${S.pending.length}件をまとめて本棚に保存</button><span class="hint">教科と回を確かめてから押してください。</span></div>`;
   if (S.parseErr) h += `<p class="err">${esc(S.parseErr)}</p>`;
@@ -1891,6 +2118,7 @@ document.addEventListener('click', async (e) => {
   if (act === 'q-clear') { S.q = ''; render(); const i = $('#q'); if (i) i.focus(); return; }
   if (act === 'find-clear') { S.quizText = ''; S.matchInfo = null; S.findMsg = ''; render(); return; }
   if (act === 'to-top') { window.scrollTo(0, 0); return; }
+  if (act === 'ocr-mode') { S.ocrMode = b.dataset.v; LS.set('rs-ocr', S.ocrMode); render(); return; }
   if (act === 'saved-close') { S.autoSaved = []; render(); return; }
   if (act === 'sheet-toggle') { setSheet(!S.sheetOn); return; }
   if (act === 'match-go') { if (!S.openLec) S.backY = window.scrollY; const i = Number(b.dataset.i); const c = S.matchInfo.cands[i]; S.curMatchI = i; S.curMatchP = c.p; if (S.openLec !== c.lecId) { pdfHostEl = null; S.lecMode = S.noPdf[c.lecId] ? 'text' : 'pdf'; } S.openLec = c.lecId; S.openPage = c.p; render(); return; }
