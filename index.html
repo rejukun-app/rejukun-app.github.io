@@ -699,7 +699,13 @@ function findDup(p) {
 }
 // a new handout is saved without asking when we are sure of its subject and number and it is not already on the shelf
 async function settle(p) {
-  p.dup = !!findDup(p) || S.pending.some((q) => q.fileName === p.fileName && p.kind !== 'photo');
+  const same = findDup(p);
+  // the handout is already on the shelf but this device has no original of it: just attach the file
+  if (same && p.kind !== 'photo' && p.file && same.fileName === p.fileName) {
+    let has = null; try { has = await IDB.get(same.id); } catch { }
+    if (!has) { try { await IDB.put(same.id, p.file); delete S.noPdf[same.id]; S.autoSaved.push({ id: same.id, label: `${same.subject} 第${same.num ?? '?'}回（原本をつなぎ直しました）` }); return; } catch { } }
+  }
+  p.dup = !!same || S.pending.some((q) => q.fileName === p.fileName && p.kind !== 'photo');
   if (S.autoSave && p.sure && p.num != null && !p.dup) {
     try { await savePending(p); S.autoSaved.push({ id: p.savedId, label: `${p.subject} 第${p.num}回` }); return; } catch (e) { S.parseErr = saveErrMsg(e); }
   }
@@ -1282,8 +1288,8 @@ function viewLecture() {
     <div class="row">${l.builtin ? '' : `<button class="btn small" data-act="edit-meta" aria-expanded="${S.editMeta === l.id}">回・タイトルを直す</button>`}<button class="btn small" data-act="manage" aria-expanded="${S.manage === l.id}">${S.manage === l.id ? '問題の一覧を閉じる' : `問題の一覧・整理`}</button></div>
     ${S.manage === l.id ? manageList(l) : ''}`;
   if (S.lecMode === 'pdf') return h + `<div id="pdfhost" class="list"></div>` + backBottom;
-  if (S.noPdf[l.id] && l.kind === 'photo') h += `<p class="notice">写真の原本は、写真を入れた端末にだけ保存されています。この端末では文字だけ表示しています。</p>`;
-  else if (S.noPdf[l.id]) h += `<p class="notice row">この端末にはPDFの原本がないので、文字だけ表示しています。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
+  if (S.noPdf[l.id] && l.kind === 'photo') h += `<p class="notice">写真の原本は、写真を入れた端末とアドレスにだけ保存されています。ここでは文字だけ表示しています。</p>`;
+  else if (S.noPdf[l.id]) h += `<p class="notice row">この端末にはPDFの原本がないので、文字だけ表示しています（原本は、入れた端末のブラウザの中にだけ保存されます）。本棚にPDFをまとめて入れ直すと、全部の回の原本をいっぺんにつなぎ直せます。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
   h += `<label class="toggle"><input type="checkbox" id="sheet" ${S.sheetOn ? 'checked' : ''}> 赤シートをかける（赤字をタップでめくる）</label>
     <div class="list ${S.sheetOn ? 'sheet-on' : ''}" id="sheetlist">`;
   h += `<button class="sheet-fab ${S.sheetOn ? 'on' : ''}" id="sheetfab" data-act="sheet-toggle" aria-pressed="${S.sheetOn}">${S.sheetOn ? '赤シートをはずす' : '赤シートをかける'}</button>`;
