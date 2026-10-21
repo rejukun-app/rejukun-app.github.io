@@ -163,6 +163,9 @@ label.f input, label.f select { border: 1px solid var(--rule); background: var(-
 .mask { color: var(--red); font-weight: 700; }
 .sheet-fab { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 20; border: 0; border-radius: 999px; padding: 12px 18px; font: inherit; font-size: 14px; font-weight: 700; color: #fff; background: var(--navy); box-shadow: 0 4px 14px rgba(0,0,0,.25); cursor: pointer; }
 .sheet-fab.on { background: var(--red); }
+.seg button.nopdf { opacity: .6; }
+.seg button.nopdf small { display: block; font-size: 10px; font-weight: 500; }
+.notice.flash { border-color: var(--red); color: var(--ink); }
 .back-fab { position: fixed; left: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 20; border: 1px solid var(--rule); border-radius: 999px; padding: 12px 16px; font: inherit; font-size: 14px; font-weight: 700; color: var(--ink); background: var(--sheet); box-shadow: 0 4px 14px rgba(0,0,0,.2); cursor: pointer; }
 .back-fab[hidden] { display: none; }
 body { padding-bottom: 64px; }
@@ -701,7 +704,7 @@ function findDup(p) {
 async function settle(p) {
   const same = findDup(p);
   // the handout is already on the shelf but this device has no original of it: just attach the file
-  if (same && p.kind !== 'photo' && p.file && same.fileName === p.fileName) {
+  if (same && p.kind !== 'photo' && p.file && (same.fileName === p.fileName || (same.num === p.num && same.pages.length === p.pages.length))) {
     let has = null; try { has = await IDB.get(same.id); } catch { }
     if (!has) { try { await IDB.put(same.id, p.file); delete S.noPdf[same.id]; S.autoSaved.push({ id: same.id, label: `${same.subject} 第${same.num ?? '?'}回（原本をつなぎ直しました）` }); return; } catch { } }
   }
@@ -1277,7 +1280,7 @@ function viewLecture() {
   const backBottom = `<div class="row backrow"><button class="btn" data-act="back">${backLbl}</button><button class="btn ghost small" data-act="to-top">↑ 上へ</button></div>`;
   let h = `<div class="viewer-head"><button class="btn small ghost" data-act="back">${backLbl}</button>
     <h2>${esc(l.subject)} ${l.num != null ? '第' + l.num + '回' : ''}<br><span style="font-size:15px;font-weight:500">${esc(l.title || '')}</span></h2></div>
-    <div class="row"><div class="seg" role="group" aria-label="表示"><button data-act="mode-pdf" aria-pressed="${S.lecMode === 'pdf'}">${l.kind === 'photo' ? '原本（写真）' : '原本（PDF）'}</button><button data-act="mode-text" aria-pressed="${S.lecMode === 'text'}">テキスト・赤シート</button></div>
+    <div class="row"><div class="seg" role="group" aria-label="表示"><button data-act="mode-pdf" aria-pressed="${S.lecMode === 'pdf'}" class="${S.noPdf[l.id] ? 'nopdf' : ''}">${l.kind === 'photo' ? '原本（写真）' : '原本（PDF）'}${S.noPdf[l.id] ? '<small>この端末になし</small>' : ''}</button><button data-act="mode-text" aria-pressed="${S.lecMode === 'text'}">テキスト・赤シート</button></div>
     ${subjectMode(l.subject) === 'none' && !hasAi(l) ? '' : `<button class="btn small primary" data-act="solve" data-id="${l.id}">この回を解く</button>`}
     ${S.confirmDel === l.id ? `<span class="confirm">本当に消しますか？<button class="btn small" data-act="del-yes" data-id="${l.id}">消す</button><button class="btn small ghost" data-act="del-no">やめる</button></span>` : `<button class="btn small ghost" data-act="del" data-id="${l.id}">本棚から消す</button>`}</div>
     ${matchBanner(l)}
@@ -1289,7 +1292,7 @@ function viewLecture() {
     ${S.manage === l.id ? manageList(l) : ''}`;
   if (S.lecMode === 'pdf') return h + `<div id="pdfhost" class="list"></div>` + backBottom;
   if (S.noPdf[l.id] && l.kind === 'photo') h += `<p class="notice">写真の原本は、写真を入れた端末とアドレスにだけ保存されています。ここでは文字だけ表示しています。</p>`;
-  else if (S.noPdf[l.id]) h += `<p class="notice row">この端末にはPDFの原本がないので、文字だけ表示しています（原本は、入れた端末のブラウザの中にだけ保存されます）。本棚にPDFをまとめて入れ直すと、全部の回の原本をいっぺんにつなぎ直せます。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
+  else if (S.noPdf[l.id]) h += `<p class="notice row ${S.noPdfFlash ? 'flash' : ''}">この端末にはPDFの原本がないので、文字だけ表示しています（原本は、入れた端末のブラウザの中にだけ保存されます）。本棚にPDFをまとめて入れ直すと、全部の回の原本をいっぺんにつなぎ直せます。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
   h += `<label class="toggle"><input type="checkbox" id="sheet" ${S.sheetOn ? 'checked' : ''}> 赤シートをかける（赤字をタップでめくる）</label>
     <div class="list ${S.sheetOn ? 'sheet-on' : ''}" id="sheetlist">`;
   h += `<button class="sheet-fab ${S.sheetOn ? 'on' : ''}" id="sheetfab" data-act="sheet-toggle" aria-pressed="${S.sheetOn}">${S.sheetOn ? '赤シートをはずす' : '赤シートをかける'}</button>`;
@@ -1881,7 +1884,7 @@ document.addEventListener('click', async (e) => {
   if (act === 'intro-quiz') { S.view = 'quiz'; S.openLec = null; render(); window.scrollTo(0, 0); return; }
   if (act === 'intro-search') { S.view = 'search'; S.openLec = null; S.focusSearch = true; render(); window.scrollTo(0, 0); return; }
   if (act === 'photo-to') { S.addTarget = b.dataset.sub; $('#photo').click(); return; }
-  if (act === 'mode-pdf') { S.lecMode = 'pdf'; if (S.noPdf[S.openLec]) { if ((S.lectures.find((x) => x.id === S.openLec) || {}).kind === 'photo') { S.lecMode = 'text'; render(); return; } S.reattachId = S.openLec; $('#refile').click(); return; } render(); return; }
+  if (act === 'mode-pdf') { if (S.noPdf[S.openLec]) { S.lecMode = 'text'; S.noPdfFlash = true; render(); return; } S.lecMode = 'pdf'; render(); return; }
   if (act === 'mode-text') { S.lecMode = 'text'; render(); return; }
   if (act === 'reattach') { S.reattachId = b.dataset.id; $('#refile').click(); return; }
   if (act === 'match-close') { S.matchInfo = null; render(); return; }
@@ -1904,7 +1907,7 @@ document.addEventListener('click', async (e) => {
   if (act === 'open' || act === 'goto') { if (S.openLec !== id) { pdfHostEl = null; S.lecMode = S.noPdf[id] ? 'text' : 'pdf'; } }
   if (act === 'open') { S.openLec = id; S.confirmDel = null; render(); window.scrollTo(0, 0); }
   else if (act === 'goto') { S.openLec = id; S.openPage = b.dataset.p; render(); }
-  else if (act === 'back') { S.openLec = null; S.confirmDel = null; S.openPage = null; render(); const y = S.backY || 0; S.backY = 0; requestAnimationFrame(() => window.scrollTo(0, y)); }
+  else if (act === 'back') { S.noPdfFlash = false; S.openLec = null; S.confirmDel = null; S.openPage = null; render(); const y = S.backY || 0; S.backY = 0; requestAnimationFrame(() => window.scrollTo(0, y)); }
   else if (act === 'solve') { S.openLec = null; S.view = 'quiz'; const l = S.lectures.find((x) => x.id === id); S.quizCfg = { ...S.quizCfg, subject: l ? l.subject : '', lec: id }; S.quiz = null; startQuiz(); }
   else if (act === 'start') startQuiz();
   else if (act === 'smode') { S.progress.subjectMode = { ...(S.progress.subjectMode || {}), [b.dataset.sub]: b.dataset.v }; queueProgress(); render(); }
