@@ -163,6 +163,9 @@ label.f input, label.f select { border: 1px solid var(--rule); background: var(-
 .mask { color: var(--red); font-weight: 700; }
 .sheet-fab { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 20; border: 0; border-radius: 999px; padding: 12px 18px; font: inherit; font-size: 14px; font-weight: 700; color: #fff; background: var(--navy); box-shadow: 0 4px 14px rgba(0,0,0,.25); cursor: pointer; }
 .sheet-fab.on { background: var(--red); }
+.back-fab { position: fixed; left: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 20; border: 1px solid var(--rule); border-radius: 999px; padding: 12px 16px; font: inherit; font-size: 14px; font-weight: 700; color: var(--ink); background: var(--sheet); box-shadow: 0 4px 14px rgba(0,0,0,.2); cursor: pointer; }
+.back-fab[hidden] { display: none; }
+body { padding-bottom: 64px; }
 .autosave { margin-top: 8px; font-size: 13px; }
 .saved { color: var(--good); border-color: var(--good); justify-content: space-between; }
 .linkbtn { border: 0; background: none; padding: 0; font: inherit; color: var(--navy); text-decoration: underline; cursor: pointer; }
@@ -1052,7 +1055,38 @@ function makeChoices(answer, pool) {
 }
 
 // ---------- views ----------
-function render() {
+// ---------- going back: a floating button on every inner screen, and the phone's / browser's back works too ----------
+const screenDepth = () => (S.view === 'help' ? 1 : 0) + (S.openLec ? 1 : 0) + (S.view === 'quiz' && S.quiz ? 1 : 0);
+function backLabel() {
+  if (S.view === 'help') return '← もどる';
+  if (S.openLec) return S.view === 'search' ? '← 検索にもどる' : S.view === 'quiz' ? '← 問題にもどる' : '← 本棚にもどる';
+  if (S.view === 'quiz' && S.quiz) return '← 問題の一覧へ';
+  return '';
+}
+function goBack() {
+  if (S.view === 'help') { S.view = S.helpFrom || 'lib'; renderView(); window.scrollTo(0, 0); return; }
+  if (S.openLec) { S.openLec = null; S.confirmDel = null; S.openPage = null; renderView(); const y = S.backY || 0; S.backY = 0; requestAnimationFrame(() => window.scrollTo(0, y)); return; }
+  if (S.view === 'quiz' && S.quiz) { S.quiz = null; renderView(); window.scrollTo(0, 0); }
+}
+let histDepth = 0, skipPops = 0;
+function syncHistory() {
+  const d = screenDepth();
+  try {
+    while (histDepth < d) { history.pushState({ rejukun: histDepth + 1 }, ''); histDepth++; }
+    if (histDepth > d) { skipPops += histDepth - d; history.go(d - histDepth); histDepth = d; }
+  } catch { histDepth = d; }
+  let fab = document.getElementById('backfab');
+  const label = backLabel();
+  const show = d > 0 && label && !(S.authState === 'out' && !S.guest && S.view !== 'help');
+  if (show && !fab) { fab = document.createElement('button'); fab.id = 'backfab'; fab.className = 'back-fab'; fab.dataset.act = 'go-back'; document.body.appendChild(fab); }
+  if (fab) { fab.hidden = !show; if (show) fab.textContent = label; }
+}
+window.addEventListener('popstate', () => {
+  if (skipPops > 0) { skipPops--; return; }
+  if (histDepth > 0) { histDepth--; goBack(); syncHistory(); }
+});
+function render() { renderView(); syncHistory(); }
+function renderView() {
   document.querySelectorAll('nav.tabs button').forEach((b) => { if (b.dataset.view === S.view && !S.openLec) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   const app = $('#app');
   renderAcct();
@@ -1835,6 +1869,7 @@ document.addEventListener('click', async (e) => {
   if (act === 'del-sub') { setSubjects(subjectList().filter((x) => x !== b.dataset.sub)); render(); return; }
   if (act === 'help') { S.helpFrom = S.view === 'help' ? S.helpFrom : S.view; S.view = 'help'; render(); window.scrollTo(0, 0); return; }
   if (act === 'help-back') { S.view = S.helpFrom || 'lib'; render(); window.scrollTo(0, 0); return; }
+  if (act === 'go-back') { goBack(); syncHistory(); return; }
   if (act === 'intro-hide' || act === 'intro-show') { S.introHidden = act === 'intro-hide'; LS.set('rs-intro-hidden', S.introHidden); render(); return; }
   if (act === 'intro-add') { S.addTarget = null; $('#file').click(); return; }
   if (act === 'intro-quiz') { S.view = 'quiz'; S.openLec = null; render(); window.scrollTo(0, 0); return; }
