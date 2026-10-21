@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>レジュ君</title>
+<title>RejuReju</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Dela+Gothic+One&family=IBM+Plex+Mono:wght@500&display=swap">
@@ -242,7 +242,7 @@ mark { background: #ffe58a; color: inherit; padding: 0 1px; border-radius: 2px; 
 
 <header class="top">
   <div class="wrap">
-    <h1 class="logo"><span class="chip" aria-hidden="true"></span>レジュ君</h1>
+    <h1 class="logo"><span class="chip" aria-hidden="true"></span>RejuReju</h1>
     <nav class="tabs" aria-label="画面">
       <button id="tab-lib" data-view="lib" aria-current="page">本棚</button>
       <button id="tab-quiz" data-view="quiz">問題</button>
@@ -256,7 +256,7 @@ mark { background: #ffe58a; color: inherit; padding: 0 1px; border-radius: 2px; 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <input id="refile" type="file" accept="application/pdf,.pdf" hidden>
-<footer class="wrap foot"><button class="btn small ghost" data-act="help">レジュ君 使い方ガイド</button><p>入れたレジュメは、ほかの利用者には見えません（管理者は管理画面から見ることができます）。原本（PDF・写真）は、入れた端末の中に保存されます。問題は自動で作っているので、まちがいがあればレジュメで確かめてください。</p></footer>
+<footer class="wrap foot"><button class="btn small ghost" data-act="help">RejuReju 使い方ガイド</button><p>入れたレジュメは、ほかの利用者には見えません（管理者は管理画面から見ることができます）。原本（PDF・写真）は、入れた端末の中に保存されます。問題は自動で作っているので、まちがいがあればレジュメで確かめてください。</p></footer>
 
 <script>
 // Shared extractor logic (same code goes into the page)
@@ -523,7 +523,7 @@ function userCol() {
 }
 function loginView() {
   const err = S.authErr ? `<p class="err">${esc(S.authErr)}</p>` : '';
-  return `<section class="intro login"><div class="intro-head"><h2>レジュ君へようこそ</h2></div>
+  return `<section class="intro login"><div class="intro-head"><h2>RejuRejuへようこそ</h2></div>
     <ol class="steps">
       <li><span class="no">①</span><div><b>レジュメをまとめることができる</b><p>授業のPDFや、紙のプリント・メモの写真を入れると、教科ごとのフォルダに第1回、第2回…と並びます。</p></div></li>
       <li><span class="no">②</span><div><b>まとめたものを問題形式にしてくれる</b><p>赤字は穴埋め問題に、計算や式は4択問題になります。</p></div></li>
@@ -589,7 +589,7 @@ async function flushProgress() {
 }
 const SAMPLE_ID = 'demo-howto';
 function sampleLecture() {
-  return { id: SAMPLE_ID, subject: 'レジュ君の使い方', num: 1, title: 'はじめに（お試し）', builtin: true, pages: SAMPLE.pages, items: SAMPLE.items };
+  return { id: SAMPLE_ID, subject: 'RejuRejuの使い方', num: 1, title: 'はじめに（お試し）', builtin: true, pages: SAMPLE.pages, items: SAMPLE.items };
 }
 function mergeLectures(docs) {
   const list = docs.slice();
@@ -1107,8 +1107,8 @@ function renderView() {
 function viewHelp() {
   const sec = (t, body) => `<section class="panel guide"><h3>${t}</h3>${body}</section>`;
   const tbl = (head, rows) => `<table class="gtable"><thead><tr>${head.map((x) => `<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((x) => `<td>${x}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-  return `<div class="viewer-head"><button class="btn small ghost" data-act="help-back">← もどる</button><h2>レジュ君 使い方ガイド</h2></div>
-  <p class="glead">レジュ君は、授業のレジュメを教科ごとにまとめて、赤字や赤ペンのところから問題を作ってくれる勉強アプリです。https://rejukun-app.github.io/ をスマホかパソコンで開けば、すぐ使えます。</p>
+  return `<div class="viewer-head"><button class="btn small ghost" data-act="help-back">← もどる</button><h2>RejuReju 使い方ガイド</h2></div>
+  <p class="glead">RejuRejuは、授業のレジュメを教科ごとにまとめて、赤字や赤ペンのところから問題を作ってくれる勉強アプリです。https://rejukun-app.github.io/ をスマホかパソコンで開けば、すぐ使えます。</p>
   ${sec('はじめかた', `<p>まずはサイトを開いて、Googleでログインします。ログインすると、スマホとパソコンで同じ本棚が使えます。</p>
     <ol><li>https://rejukun-app.github.io/ を開きます（QRコードからでもOK）。</li><li>「Googleでログイン」を押して、自分のGoogleアカウントを選びます。</li><li>ログインしたくないときは「ログインせずに使う」を押します。この場合、データはそのブラウザの中だけに保存されます。</li></ol>
     <p>スマホのホーム画面に置いておくと、アプリのようにすぐ開けます。</p>
@@ -1139,14 +1139,14 @@ function viewHelp() {
       ['手書きの文字が間違っている', '「テキスト・赤シート」で確かめて、おかしい問題は「問題の一覧・整理」で消してください。'],
       ['別の端末で原本が出ない', '原本は入れた端末にだけ保存されます。文字と問題はどの端末でも使えます。'],
       ['新しくなったはずが、前のまま', 'パソコンなら Ctrl + F5、スマホならページを開き直します。']]) + `
-    <h4>注意すること</h4><ul><li>写真はGoogleのGeminiで読み取ります。無料の仕組みなので、送った写真がGoogleのサービス改善に使われることがあります。名前や学籍番号は写さないでください。</li><li>ログインして保存したレジュメは、他の利用者には見えません。ただし、レジュ君の管理者は管理画面からデータを見られます（見ません！）。</li><li>問題は自動で作っているので、まちがいがあることもあります。気になったら「レジュメで見る」で元のページを確かめてください。</li><li>不具合や「こんな機能がほしい」があれば、大雅まで教えてください。</li></ul>`)}
+    <h4>注意すること</h4><ul><li>写真はGoogleのGeminiで読み取ります。無料の仕組みなので、送った写真がGoogleのサービス改善に使われることがあります。名前や学籍番号は写さないでください。</li><li>ログインして保存したレジュメは、他の利用者には見えません。ただし、RejuRejuの管理者は管理画面からデータを見られます（見ません！）。</li><li>問題は自動で作っているので、まちがいがあることもあります。気になったら「レジュメで見る」で元のページを確かめてください。</li><li>不具合や「こんな機能がほしい」があれば、大雅まで教えてください。</li></ul>`)}
   <div><button class="btn small ghost" data-act="help-back">← もどる</button></div>`;
 }
 
 function introPanel() {
   if (S.introHidden) return '';
   return `<section class="intro" aria-labelledby="intro-h">
-    <div class="intro-head"><h2 id="intro-h">レジュ君の使い方</h2><button class="btn small" data-act="help">くわしいガイド</button><button class="btn small ghost" data-act="intro-hide">閉じる</button></div>
+    <div class="intro-head"><h2 id="intro-h">RejuRejuの使い方</h2><button class="btn small" data-act="help">くわしいガイド</button><button class="btn small ghost" data-act="intro-hide">閉じる</button></div>
     <ol class="steps">
       <li><span class="no">①</span><div><b>レジュメをまとめることができる</b><p>授業のPDFや、紙のプリント・メモの写真を入れると、教科ごとのフォルダに第1回、第2回…と並びます。</p><button class="btn small" data-act="intro-add">PDFを追加する</button></div></li>
       <li><span class="no">②</span><div><b>まとめたものを問題形式にしてくれる</b><p>赤字や赤ペンのところは穴埋め問題に、計算や式は4択問題になります。</p><button class="btn small" data-act="intro-quiz">問題を解く</button></div></li>
@@ -1189,7 +1189,7 @@ function viewLib() {
     }
     h += `</section>`;
   }
-  if (S.introHidden) h += `<div><button class="btn small ghost" data-act="intro-show">レジュ君の使い方を表示</button></div>`;
+  if (S.introHidden) h += `<div><button class="btn small ghost" data-act="intro-show">RejuRejuの使い方を表示</button></div>`;
   return h;
 }
 function pendingPanel(p) {
@@ -1711,7 +1711,7 @@ async function explain() {
   let sample = null;
   try { sample = window.claude && window.claude.use ? await window.claude.use('sample') : null; } catch { }
   if (!sample) { S.canExplain = false; }
-  if (!sample) return fail('この画面では解説機能が使えません。claude.ai でレジュ君を開いてお試しください。');
+  if (!sample) return fail('この画面では解説機能が使えません。claude.ai でRejuRejuを開いてお試しください。');
   const pg = lec.pages.find((x) => x.p === it.p);
   const pageText = pg ? [pg.title, ...pg.lines.slice(1).map((l) => l.map((x) => x[0]).join(''))].join('\n').slice(0, 1500) : '';
   const prompt = `あなたは大学の授業の復習を手伝う先輩です。次の用語を、大学1年生にもわかるように日本語で解説してください。
