@@ -1108,9 +1108,9 @@ function viewHelp() {
   const sec = (t, body) => `<section class="panel guide"><h3>${t}</h3>${body}</section>`;
   const tbl = (head, rows) => `<table class="gtable"><thead><tr>${head.map((x) => `<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((x) => `<td>${x}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   return `<div class="viewer-head"><button class="btn small ghost" data-act="help-back">← もどる</button><h2>RejuReju 使い方ガイド</h2></div>
-  <p class="glead">RejuRejuは、授業のレジュメを教科ごとにまとめて、赤字や赤ペンのところから問題を作ってくれる勉強アプリです。https://rejukun-app.github.io/ をスマホかパソコンで開けば、すぐ使えます。</p>
+  <p class="glead">RejuRejuは、授業のレジュメを教科ごとにまとめて、赤字や赤ペンのところから問題を作ってくれる勉強アプリです。https://rejureju-app.github.io/ をスマホかパソコンで開けば、すぐ使えます。</p>
   ${sec('はじめかた', `<p>まずはサイトを開いて、Googleでログインします。ログインすると、スマホとパソコンで同じ本棚が使えます。</p>
-    <ol><li>https://rejukun-app.github.io/ を開きます（QRコードからでもOK）。</li><li>「Googleでログイン」を押して、自分のGoogleアカウントを選びます。</li><li>ログインしたくないときは「ログインせずに使う」を押します。この場合、データはそのブラウザの中だけに保存されます。</li></ol>
+    <ol><li>https://rejureju-app.github.io/ を開きます（QRコードからでもOK）。</li><li>「Googleでログイン」を押して、自分のGoogleアカウントを選びます。</li><li>ログインしたくないときは「ログインせずに使う」を押します。この場合、データはそのブラウザの中だけに保存されます。</li></ol>
     <p>スマホのホーム画面に置いておくと、アプリのようにすぐ開けます。</p>
     <ul><li>iPhone（Safari）：下の共有ボタン →「ホーム画面に追加」</li><li>Android（Chrome）：右上の「︙」→「ホーム画面に追加」</li></ul>`)}
   ${sec('レジュメを入れる', `<p>授業のPDFも、紙で配られたプリントや手書きのメモも、「本棚」タブから入れられます。入れたものは、教科ごとのフォルダに第1回、第2回…と順番に並びます。</p>
