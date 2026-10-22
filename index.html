@@ -263,7 +263,7 @@ mark { background: #ffe58a; color: inherit; padding: 0 1px; border-radius: 2px; 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <input id="refile" type="file" accept="application/pdf,.pdf" hidden>
-<footer class="wrap foot"><button class="btn small ghost" data-act="help">RejuReju 使い方ガイド</button><p>入れたレジュメは、ほかの利用者には見えません（管理者は管理画面から見ることができます）。原本（PDF・写真）は、入れた端末の中に保存されます。問題は自動で作っているので、まちがいがあればレジュメで確かめてください。</p></footer>
+<footer class="wrap foot"><button class="btn small ghost" data-act="help">RejuReju 使い方ガイド</button><p>入れたレジュメは、ほかの利用者には見えません（管理者は管理画面から見ることができます）。ログインしていれば、原本（PDF・写真）もクラウドに保存されるので、どの端末やブラウザからでも見られます。問題は自動で作っているので、まちがいがあればレジュメで確かめてください。</p></footer>
 
 <script>
 // Shared extractor logic (same code goes into the page)
@@ -490,7 +490,7 @@ const S = {
   quiz: null, quizCfg: { subject: '', lec: 'all', mode: 'all', answer: 'auto' },
   q: '',
   confirmDel: null,
-  quizMsg: '', polishing: {}, aiGen: {}, review: {}, autoSaved: [], autoSave: true, parseTotal: 0, parseDone: 0, addTarget: null, renaming: null, manage: null, editMeta: null, canImage: false, matchInfo: null, quizText: '', finding: '', findMsg: '', canExplain: false, lookup: {}, introHidden: false, lecMode: 'pdf', noPdf: {}, reattachId: null, newSub: '', collapsed: {}, libMsg: '', exp: {},
+  quizMsg: '', polishing: {}, aiGen: {}, review: {}, cloudUp: {}, autoSaved: [], autoSave: true, parseTotal: 0, parseDone: 0, addTarget: null, renaming: null, manage: null, editMeta: null, canImage: false, matchInfo: null, quizText: '', finding: '', findMsg: '', canExplain: false, lookup: {}, introHidden: false, lecMode: 'pdf', noPdf: {}, reattachId: null, newSub: '', collapsed: {}, libMsg: '', exp: {},
 };
 let db = null, uid = null;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -528,6 +528,8 @@ function userCol() {
     },
   };
 }
+// the LINE helper parameter is only needed once: drop it so a bookmark or shortcut is the plain address
+try { if (/[?&]openExternalBrowser=/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash); } catch { }
 const IN_APP = /\bLine\/|FBAN|FBAV|Instagram|Twitter|TikTok|KAKAOTALK/i.test(navigator.userAgent || '');
 function inAppBanner() {
   if (!IN_APP) return '';
@@ -580,7 +582,7 @@ async function saveLecture(lec) {
 }
 async function deleteLecture(id) {
   if (id === SAMPLE_ID) { S.progress.hidden['lec:' + id] = 1; queueProgress(); return; }
-  if (S.storage === 'db') await userCol().doc(id).delete();
+  if (S.storage === 'db') { try { await cloudDel(rawDocs.find((d) => d.id === id)); } catch { } await userCol().doc(id).delete(); }
   else { const all = LS.get('rs-lectures', {}); delete all[id]; LS.set('rs-lectures', all); }
 }
 let progTimer = null, progWriting = false, progDirty = false;
@@ -662,6 +664,7 @@ function startStore() {
       else if (v && v.pages) rawDocs.push({ id: d.id, ...v });
     });
     mergeLectures(rawDocs); S.ready = true; render();
+    setTimeout(backfillCloud, 1500);
   }, () => { S.libMsg = 'データを読み込めませんでした。通信状態を確かめて、ページを開き直してください。'; S.ready = true; render(); });
 }
 function loadLocal() {
@@ -716,9 +719,10 @@ function findDup(p) {
 async function settle(p) {
   const same = findDup(p);
   // the handout is already on the shelf but this device has no original of it: just attach the file
+  if (same && same.cloud && p.kind !== 'photo' && same.fileName === p.fileName) { S.autoSaved.push({ id: same.id, label: `${same.subject} 第${same.num ?? '?'}回（もう入っています）` }); return; }
   if (same && p.kind !== 'photo' && p.file && (same.fileName === p.fileName || (same.num === p.num && same.pages.length === p.pages.length))) {
     let has = null; try { has = await IDB.get(same.id); } catch { }
-    if (!has) { try { await IDB.put(same.id, p.file); delete S.noPdf[same.id]; S.autoSaved.push({ id: same.id, label: `${same.subject} 第${same.num ?? '?'}回（原本をつなぎ直しました）` }); return; } catch { } }
+    if (!has) { try { await IDB.put(same.id, p.file); delete S.noPdf[same.id]; queueUpload(same.id, p.file); S.autoSaved.push({ id: same.id, label: `${same.subject} 第${same.num ?? '?'}回（原本をつなぎ直しました）` }); return; } catch { } }
   }
   p.dup = !!same || S.pending.some((q) => q.fileName === p.fileName && p.kind !== 'photo');
   if (S.autoSave && p.sure && p.num != null && !p.dup) {
@@ -746,7 +750,9 @@ const saveErrMsg = (err) => (err && err.code === 'quota_exceeded') ? '保存で�
 async function savePending(p) {
   const lec = { id: 'lec-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), subject: p.subject || '未分類', num: p.num ?? null, title: p.title || '', fileName: p.fileName, addedAt: new Date().toISOString(), pages: p.pages, items: p.items, kind: p.kind || 'pdf' };
   await saveLecture(lec);
-  try { await IDB.put(lec.id, p.photos ? { photos: p.photos } : p.file); } catch { }
+  const orig = p.photos ? { photos: p.photos } : p.file;
+  try { await IDB.put(lec.id, orig); } catch { }
+  queueUpload(lec.id, orig);
   if (S.canExplain) setTimeout(() => polishLecture(lec.id), 300);
   if (!subjectList().includes(lec.subject)) setSubjects([...subjectList(), lec.subject]);
   if (!rawDocs.some((d) => d.id === lec.id)) { rawDocs.push(lec); mergeLectures(rawDocs); }
@@ -1359,7 +1365,7 @@ function viewHelp() {
     <p>表紙や「本日の講義内容」「アジェンダ」のページの色文字、図や表のラベル、見出しの一部、出席・成績・提出期限などの連絡用の赤字は、問題にしません。もっと細かく直したいときは、レジュメの画面の「Geminiで問題を見直す」を押すと、Geminiが1問ずつ見直して、関係ない問題を外し、文章を読みやすく整えます。</p>`)}
   ${sec('レジュメを見る', `<p>本棚で「レジュメ」を押すと、その回の中身を見られます。上のボタンで、見方を2つから選べます。</p>
     <ul><li><b>原本（PDF・写真）</b>：入れたものをそのまま表示します。</li><li><b>テキスト・赤シート</b>：文字だけを表示します。「赤シートをかける」にチェックを入れると赤字が隠れて、タップするとめくれます。</li></ul>
-    <p>原本は、入れた端末の中だけに保存されます。別の端末では文字だけが表示されますが、PDFなら「PDFを選んで原本を表示」でもう一度入れられます。</p>
+    <p>ログインしていれば、原本もクラウド（Googleのアカウントの本棚）に保存されるので、スマホでもパソコンでも、LINEから開いても見られます。初めて開く端末では読み込みに少し時間がかかりますが、2回目からはすぐ開きます。ログインせずに使っているときは、原本はその端末の中にだけ保存されます。</p>
     <p>第何回やタイトルが間違っていたら「回・タイトルを直す」、いらない回は「本棚から消す」で消せます。</p>`)}
   ${sec('問題を解く', `<p>「問題」タブで教科を選ぶと、入れたレジュメから作った問題が出ます。本棚の「解く」を押せば、その回だけを解けます。</p>
     <ol><li>教科と、どの回から出すかを選びます。</li><li>「答え方」をレ点で選びます。4択にするか、全部書いて答えるかを切り替えられます。</li><li>答えを入れて「答え合わせ」。分からないときは「わからない（答えを見る）」を押します。</li><li>「レジュメで見る」を押すと、その問題が載っているページが開きます。</li></ol>
@@ -1373,7 +1379,7 @@ function viewHelp() {
       ['「文字を読み取れませんでした」と出たPDF', 'スキャンした画像のPDFです。各ページを写真（スクショ）にして「写真を追加」から入れてください。'],
       ['写真を入れたら「上限に達しました」', '1日に使える回数の上限です。時間をおいてからもう一度試してください。'],
       ['手書きの文字が間違っている', '「テキスト・赤シート」で確かめて、おかしい問題は「問題の一覧・整理」で消してください。'],
-      ['別の端末で原本が出ない', '原本は入れた端末にだけ保存されます。文字と問題はどの端末でも使えます。'],
+      ['別の端末で原本が出ない', 'ログインしているか確かめてください。前に入れた回は、原本を入れた端末でRejuRejuを一度開くと、自動でクラウドに保存されます。本棚にPDFを入れ直してもOKです。'],
       ['新しくなったはずが、前のまま', 'パソコンなら Ctrl + F5、スマホならページを開き直します。']]) + `
     <h4>注意すること</h4><ul><li>写真の読み方を「Gemini」にしたときは、写真がGoogleに送られます。無料の仕組みなので、送った写真がGoogleのサービス改善に使われることがあります。名前や学籍番号は写さないでください。</li><li>ログインして保存したレジュメは、他の利用者には見えません。ただし、RejuRejuの管理者は管理画面からデータを見られます（見ません！）。</li><li>問題は自動で作っているので、まちがいがあることもあります。気になったら「レジュメで見る」で元のページを確かめてください。</li><li>不具合や「こんな機能がほしい」があれば、大雅まで教えてください。</li></ul>`)}
   <div><button class="btn small ghost" data-act="help-back">← もどる</button></div>`;
@@ -1444,6 +1450,64 @@ function pendingPanel(p) {
   </section>`;
 }
 
+// ---------- originals in the cloud: any device or browser where you are logged in can show them ----------
+const CHUNK = 900 * 1024; // a Firestore document holds at most 1 MiB, so a file is stored in pieces
+const MAX_CLOUD = 40 * 1024 * 1024;
+const cloudOn = () => S.storage === 'db' && !!fdb && !!uid && typeof firebase !== 'undefined';
+const fileCol = () => fdb.collection('users').doc(uid).collection('files');
+let upChain = Promise.resolve();
+function queueUpload(id, orig) {
+  if (!cloudOn() || !orig) return;
+  S.cloudUp[id] = 'waiting';
+  upChain = upChain.then(() => cloudPut(id, orig)).catch(() => { });
+}
+async function cloudPut(id, orig) {
+  const lec = rawDocs.find((d) => d.id === id); if (!lec || !cloudOn()) { delete S.cloudUp[id]; return; }
+  if (lec.cloud) { S.cloudUp[id] = 'done'; return; }
+  const parts = orig.photos ? orig.photos : [orig];
+  if (parts.reduce((n, b) => n + (b.size || 0), 0) > MAX_CLOUD) { S.cloudUp[id] = 'big'; render(); return; }
+  S.cloudUp[id] = 'working'; render();
+  try {
+    const meta = { kind: orig.photos ? 'photo' : 'pdf', files: [], at: new Date().toISOString() };
+    for (let k = 0; k < parts.length; k++) {
+      const u8 = new Uint8Array(await parts[k].arrayBuffer());
+      const n = Math.max(1, Math.ceil(u8.length / CHUNK));
+      for (let i = 0; i < n; i++) await fileCol().doc(`${id}_${k}_${i}`).set({ lec: id, k, i, n, data: firebase.firestore.Blob.fromUint8Array(u8.subarray(i * CHUNK, (i + 1) * CHUNK)) });
+      meta.files.push({ n, size: u8.length, type: parts[k].type || (orig.photos ? 'image/jpeg' : 'application/pdf') });
+    }
+    await saveLecPatch(id, { cloud: meta });
+    S.cloudUp[id] = 'done';
+  } catch (e) { S.cloudUp[id] = 'error'; }
+  render();
+}
+async function cloudGet(lec) {
+  const meta = lec && lec.cloud; if (!meta || !cloudOn()) return null;
+  const blobs = [];
+  for (let k = 0; k < meta.files.length; k++) {
+    const f = meta.files[k], bufs = [];
+    for (let i = 0; i < f.n; i++) { const d = await fileCol().doc(`${lec.id}_${k}_${i}`).get(); if (!d.exists) return null; bufs.push(d.data().data.toUint8Array()); }
+    blobs.push(new Blob(bufs, { type: f.type }));
+  }
+  const orig = meta.kind === 'photo' ? { photos: blobs } : blobs[0];
+  try { await IDB.put(lec.id, orig); } catch { } // keep a copy on this device so it opens instantly next time
+  return orig;
+}
+async function cloudDel(lec) {
+  const meta = lec && lec.cloud; if (!meta || !cloudOn()) return;
+  for (let k = 0; k < meta.files.length; k++) for (let i = 0; i < meta.files[k].n; i++) { try { await fileCol().doc(`${lec.id}_${k}_${i}`).delete(); } catch { } }
+}
+// handouts added before this existed: send the originals this device still has
+let backfilled = false;
+async function backfillCloud() {
+  if (backfilled || !cloudOn()) return; backfilled = true;
+  for (const l of S.lectures) {
+    if (l.builtin || l.cloud) continue;
+    let orig = null; try { orig = await IDB.get(l.id); } catch { }
+    if (orig) queueUpload(l.id, orig);
+  }
+}
+setInterval(() => { if (Object.values(S.cloudUp).includes('error')) { for (const [id, st] of Object.entries(S.cloudUp)) if (st === 'error') { delete S.cloudUp[id]; IDB.get(id).then((o) => o && queueUpload(id, o)).catch(() => { }); } } }, 120000);
+
 // ---------- PDF originals (kept in this browser) ----------
 const IDB = {
   db: null,
@@ -1469,6 +1533,12 @@ async function mountPdf(host, id) {
   let blob = null;
   try { blob = await IDB.get(id); } catch { }
   if (pdfHostEl !== host) return;
+  const lecNow = S.lectures.find((x) => x.id === id);
+  if (!blob && lecNow && lecNow.cloud && cloudOn()) {
+    host.innerHTML = '<p class="notice">原本をクラウドから読み込んでいます…（次からはすぐ開きます）</p>';
+    try { blob = await cloudGet(lecNow); } catch { blob = null; }
+    if (pdfHostEl !== host) return;
+  }
   if (!blob) { pdfHostEl = null; S.noPdf[id] = true; S.lecMode = 'text'; render(); return; }
   if (blob.photos) {
     if (pdfObs) pdfObs.disconnect();
@@ -1518,8 +1588,13 @@ function viewLecture() {
     <div class="row">${l.builtin ? '' : `<button class="btn small" data-act="edit-meta" aria-expanded="${S.editMeta === l.id}">回・タイトルを直す</button>`}<button class="btn small" data-act="manage" aria-expanded="${S.manage === l.id}">${S.manage === l.id ? '問題の一覧を閉じる' : `問題の一覧・整理`}</button></div>
     ${S.manage === l.id ? manageList(l) : ''}`;
   if (S.lecMode === 'pdf') return h + `<div id="pdfhost" class="list"></div>` + backBottom;
-  if (S.noPdf[l.id] && l.kind === 'photo') h += `<p class="notice">写真の原本は、写真を入れた端末とアドレスにだけ保存されています。ここでは文字だけ表示しています。</p>`;
-  else if (S.noPdf[l.id]) h += `<p class="notice row ${S.noPdfFlash ? 'flash' : ''}">この端末にはPDFの原本がないので、文字だけ表示しています（原本は、入れた端末のブラウザの中にだけ保存されます）。本棚にPDFをまとめて入れ直すと、全部の回の原本をいっぺんにつなぎ直せます。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
+  const up = S.cloudUp[l.id];
+  if (up === 'working' || up === 'waiting') h += `<p class="notice">原本をクラウドに保存しています…（保存が終わると、ほかの端末やブラウザでも原本が見られます）</p>`;
+  else if (up === 'big') h += `<p class="notice">この原本は大きすぎる（40MBより大きい）ので、クラウドには保存していません。この端末では見られます。</p>`;
+  else if (up === 'error') h += `<p class="notice">原本をクラウドに保存できませんでした。次にRejuRejuを開いたときに、もう一度試します。</p>`;
+  if (S.noPdf[l.id] && l.kind === 'photo' && !l.cloud) h += `<p class="notice">写真の原本は、写真を入れた端末とアドレスにだけ保存されています。ここでは文字だけ表示しています。</p>`;
+  else if (S.noPdf[l.id] && l.cloud && !cloudOn()) h += `<p class="notice ${S.noPdfFlash ? 'flash' : ''}">原本はクラウドに保存されています。右上の「ログイン」からログインすると見られます。</p>`;
+  else if (S.noPdf[l.id]) h += `<p class="notice row ${S.noPdfFlash ? 'flash' : ''}">この回の原本は、まだクラウドに保存されていません。原本を入れた端末でRejuRejuを開くと、自動でクラウドに保存されます。または、本棚にPDFをもう一度入れてください（まとめて入れてもOK）。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
   h += `<label class="toggle"><input type="checkbox" id="sheet" ${S.sheetOn ? 'checked' : ''}> 赤シートをかける（赤字をタップでめくる）</label>
     <div class="list ${S.sheetOn ? 'sheet-on' : ''}" id="sheetlist">`;
   h += `<button class="sheet-fab ${S.sheetOn ? 'on' : ''}" id="sheetfab" data-act="sheet-toggle" aria-pressed="${S.sheetOn}">${S.sheetOn ? '赤シートをはずす' : '赤シートをかける'}</button>`;
@@ -2111,7 +2186,8 @@ document.addEventListener('click', async (e) => {
   if (act === 'intro-quiz') { S.view = 'quiz'; S.openLec = null; render(); window.scrollTo(0, 0); return; }
   if (act === 'intro-search') { S.view = 'search'; S.openLec = null; S.focusSearch = true; render(); window.scrollTo(0, 0); return; }
   if (act === 'photo-to') { S.addTarget = b.dataset.sub; $('#photo').click(); return; }
-  if (act === 'mode-pdf') { if (S.noPdf[S.openLec]) { S.lecMode = 'text'; S.noPdfFlash = true; render(); return; } S.lecMode = 'pdf'; render(); return; }
+  if (act === 'mode-pdf') { const lc = S.lectures.find((x) => x.id === S.openLec); if (S.noPdf[S.openLec] && lc && lc.cloud && cloudOn()) { delete S.noPdf[S.openLec]; S.noPdfFlash = false; S.lecMode = 'pdf'; pdfHostEl = null; render(); return; }
+    if (S.noPdf[S.openLec]) { S.lecMode = 'text'; S.noPdfFlash = true; render(); return; } S.lecMode = 'pdf'; render(); return; }
   if (act === 'mode-text') { S.lecMode = 'text'; render(); return; }
   if (act === 'reattach') { S.reattachId = b.dataset.id; $('#refile').click(); return; }
   if (act === 'match-close') { S.matchInfo = null; render(); return; }
@@ -2272,7 +2348,7 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'refile') {
     const f = t.files && t.files[0]; t.value = '';
     if (!f || !S.reattachId) return;
-    try { await IDB.put(S.reattachId, f); delete S.noPdf[S.reattachId]; S.lecMode = 'pdf'; pdfHostEl = null; } catch { S.libMsg = 'この端末にはPDFを保存できませんでした。'; }
+    try { await IDB.put(S.reattachId, f); queueUpload(S.reattachId, f); delete S.noPdf[S.reattachId]; S.lecMode = 'pdf'; pdfHostEl = null; } catch { S.libMsg = 'この端末にはPDFを保存できませんでした。'; }
     S.reattachId = null; render(); return;
   }
   if (t.id === 'file') { handleFiles(t.files); t.value = ''; }
