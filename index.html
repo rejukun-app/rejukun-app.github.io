@@ -530,6 +530,7 @@ function userCol() {
 }
 // the LINE helper parameter is only needed once: drop it so a bookmark or shortcut is the plain address
 try { if (/[?&]openExternalBrowser=/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash); } catch { }
+const TOUCH = (() => { try { return matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches; } catch { return false; } })();
 const IN_APP = /\bLine\/|FBAN|FBAV|Instagram|Twitter|TikTok|KAKAOTALK/i.test(navigator.userAgent || '');
 function inAppBanner() {
   if (!IN_APP) return '';
@@ -722,6 +723,7 @@ async function settle(p) {
   if (same && same.cloud && p.kind !== 'photo' && same.fileName === p.fileName) { S.autoSaved.push({ id: same.id, label: `${same.subject} 第${same.num ?? '?'}回（もう入っています）` }); return; }
   if (same && p.kind !== 'photo' && p.file && (same.fileName === p.fileName || (same.num === p.num && same.pages.length === p.pages.length))) {
     let has = null; try { has = await IDB.get(same.id); } catch { }
+    if (has && !same.cloud && cloudOn()) { queueUpload(same.id, has); S.autoSaved.push({ id: same.id, label: `${same.subject} 第${same.num ?? '?'}回（原本をクラウドに保存します）` }); return; }
     if (!has) { try { await IDB.put(same.id, p.file); delete S.noPdf[same.id]; queueUpload(same.id, p.file); S.autoSaved.push({ id: same.id, label: `${same.subject} 第${same.num ?? '?'}回（原本をつなぎ直しました）` }); return; } catch { } }
   }
   p.dup = !!same || S.pending.some((q) => q.fileName === p.fileName && p.kind !== 'photo');
@@ -1188,7 +1190,7 @@ function matchSubject(guess) {
   return list.find((s) => { const n = normAns(s); return n && g && (g.includes(n) || n.includes(g)); }) || guess;
 }
 const normAns = (s) => s.normalize('NFKC').toLowerCase().replace(/[\s「」『』()（）・、。,.\-ー―]/g, '');
-const lineHtml = (segs) => segs.map(([t, red]) => red ? `<span class="mask" tabindex="0">${esc(t)}</span>` : esc(t)).join('');
+const lineHtml = (segs) => segs.map(([t, red]) => red ? `<span class="mask"${TOUCH ? '' : ' tabindex="0"'}>${esc(t)}</span>` : esc(t)).join('');
 
 // ---------- 4-choice questions ----------
 const XL_FAMILY = [
@@ -1339,10 +1341,11 @@ function renderView() {
   else if (S.view === 'lib') app.innerHTML = viewLib();
   else if (S.view === 'quiz') app.innerHTML = viewQuiz();
   else app.innerHTML = viewSearch();
-  if (S.view === 'search' && !S.openLec && S.focusSearch) { const i = $('#q'); if (i) i.focus(); S.focusSearch = false; }
+  // on phones, focusing a text box by itself pops up the keyboard and its bar where nobody tapped: only do it with a real keyboard
+  if (S.view === 'search' && !S.openLec && S.focusSearch) { const i = $('#q'); if (i && !TOUCH) i.focus(); S.focusSearch = false; }
   if (S.openLec && S.lecMode === 'pdf') { const host = $('#pdfhost'); if (host) { if (pdfHostEl && pdfHostEl.dataset.id === S.openLec) { host.replaceWith(pdfHostEl); scrollToPending(); } else mountPdf(host, S.openLec); } }
   else if (S.openLec && S.openPage) scrollToPending();
-  const ai = $('#ans'); if (ai && S.quiz && !S.quiz.result) ai.focus({ preventScroll: true });
+  const ai = $('#ans'); if (ai && S.quiz && !S.quiz.result && !TOUCH) ai.focus({ preventScroll: true });
 }
 
 // ---------- user guide ----------
@@ -1477,7 +1480,7 @@ async function cloudPut(id, orig) {
     }
     await saveLecPatch(id, { cloud: meta });
     S.cloudUp[id] = 'done';
-  } catch (e) { S.cloudUp[id] = 'error'; }
+  } catch (e) { S.cloudUp[id] = 'error'; S.cloudErr = String((e && (e.code || e.message)) || e).slice(0, 120); try { console.warn('cloud upload', e); } catch { } }
   render();
 }
 async function cloudGet(lec) {
@@ -1536,7 +1539,7 @@ async function mountPdf(host, id) {
   const lecNow = S.lectures.find((x) => x.id === id);
   if (!blob && lecNow && lecNow.cloud && cloudOn()) {
     host.innerHTML = '<p class="notice">原本をクラウドから読み込んでいます…（次からはすぐ開きます）</p>';
-    try { blob = await cloudGet(lecNow); } catch { blob = null; }
+    try { blob = await cloudGet(lecNow); } catch (e) { blob = null; S.cloudErr = String((e && (e.code || e.message)) || e).slice(0, 120); S.cloudGetErr = id; }
     if (pdfHostEl !== host) return;
   }
   if (!blob) { pdfHostEl = null; S.noPdf[id] = true; S.lecMode = 'text'; render(); return; }
@@ -1591,8 +1594,11 @@ function viewLecture() {
   const up = S.cloudUp[l.id];
   if (up === 'working' || up === 'waiting') h += `<p class="notice">原本をクラウドに保存しています…（保存が終わると、ほかの端末やブラウザでも原本が見られます）</p>`;
   else if (up === 'big') h += `<p class="notice">この原本は大きすぎる（40MBより大きい）ので、クラウドには保存していません。この端末では見られます。</p>`;
-  else if (up === 'error') h += `<p class="notice">原本をクラウドに保存できませんでした。次にRejuRejuを開いたときに、もう一度試します。</p>`;
+  else if (up === 'error') h += `<p class="notice">原本をクラウドに保存できませんでした。しばらくしてから、自動でもう一度試します。（理由：${esc(S.cloudErr || '不明')}）</p>`;
+  if (!up && l.cloud && !S.noPdf[l.id]) h += `<p class="hint">☁ 原本はクラウドに保存済みです（ほかの端末でも見られます）</p>`;
+  else if (!up && !l.cloud && !l.builtin && cloudOn() && !S.noPdf[l.id]) h += `<p class="hint">原本は、まだこの端末にだけ保存されています。少しするとクラウドに送られます。</p>`;
   if (S.noPdf[l.id] && l.kind === 'photo' && !l.cloud) h += `<p class="notice">写真の原本は、写真を入れた端末とアドレスにだけ保存されています。ここでは文字だけ表示しています。</p>`;
+  else if (S.noPdf[l.id] && l.cloud && cloudOn() && S.cloudGetErr === l.id) h += `<p class="notice">クラウドの原本を読み込めませんでした。（理由：${esc(S.cloudErr || '不明')}）もう一度「原本」を押してみてください。</p>`;
   else if (S.noPdf[l.id] && l.cloud && !cloudOn()) h += `<p class="notice ${S.noPdfFlash ? 'flash' : ''}">原本はクラウドに保存されています。右上の「ログイン」からログインすると見られます。</p>`;
   else if (S.noPdf[l.id]) h += `<p class="notice row ${S.noPdfFlash ? 'flash' : ''}">この回の原本は、まだクラウドに保存されていません。原本を入れた端末でRejuRejuを開くと、自動でクラウドに保存されます。または、本棚にPDFをもう一度入れてください（まとめて入れてもOK）。<button class="btn small" data-act="reattach" data-id="${l.id}">PDFを選んで原本を表示</button></p>`;
   h += `<label class="toggle"><input type="checkbox" id="sheet" ${S.sheetOn ? 'checked' : ''}> 赤シートをかける（赤字をタップでめくる）</label>
@@ -2191,7 +2197,7 @@ document.addEventListener('click', async (e) => {
   if (act === 'mode-text') { S.lecMode = 'text'; render(); return; }
   if (act === 'reattach') { S.reattachId = b.dataset.id; $('#refile').click(); return; }
   if (act === 'match-close') { S.matchInfo = null; render(); return; }
-  if (act === 'q-clear') { S.q = ''; render(); const i = $('#q'); if (i) i.focus(); return; }
+  if (act === 'q-clear') { S.q = ''; render(); const i = $('#q'); if (i && !TOUCH) i.focus(); return; }
   if (act === 'find-clear') { S.quizText = ''; S.matchInfo = null; S.findMsg = ''; render(); return; }
   if (act === 'to-top') { window.scrollTo(0, 0); return; }
   if (act === 'ocr-mode') { S.ocrMode = b.dataset.v; LS.set('rs-ocr', S.ocrMode); render(); return; }
@@ -2336,7 +2342,7 @@ function judge(typed, ok) {
   Q.result = { ok, typed };
   if (ok) Q.right++; else Q.wrong.push(Q.list[Q.i]);
   record(ok); render();
-  const nb = $('#nextbtn'); if (nb) nb.focus({ preventScroll: true });
+  const nb = $('#nextbtn'); if (nb && !TOUCH) nb.focus({ preventScroll: true });
 }
 document.addEventListener('input', (e) => {
   if (e.target.id === 'newsub') { S.newSub = e.target.value; return; }
